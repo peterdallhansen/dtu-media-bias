@@ -3,7 +3,7 @@ from pathlib import Path
 from html.parser import HTMLParser
 import re
 from tqdm import tqdm
-DATA_DIR = Path("Dataset")
+DATA_DIR = Path("./Dataset")
 
 txt_tospace1 = re.compile('&#160;')
 def cleantext(text):
