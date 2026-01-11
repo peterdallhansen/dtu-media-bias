@@ -11,7 +11,8 @@ class HyperpartisanCNN(nn.Module):
         self.embedding = nn.Embedding(vocab_size, config.EMBEDDING_DIM, padding_idx=0)
         if embedding_matrix is not None:
             self.embedding.weight.data.copy_(torch.from_numpy(embedding_matrix))
-            self.embedding.weight.requires_grad = True
+            # Freeze pre-trained embeddings to prevent overfitting on small datasets
+            self.embedding.weight.requires_grad = False
 
         self.convs = nn.ModuleList(
             [

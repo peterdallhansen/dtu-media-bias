@@ -27,6 +27,13 @@ import transformer.config as transformer_config
 from svm.utils import compute_document_vectors
 import svm.config as svm_config
 
+# BERT-MLP imports
+from bert_mlp.model import BertMLP
+from bert_mlp.dataset import BertEmbeddingDataset
+from bert_mlp.utils import calculate_metrics as bert_calculate_metrics
+from bert_mlp.utils import extract_features as bert_extract_features
+import bert_mlp.config as bert_mlp_config
+
 
 # Reference values from SemEval-2019 Task 4 paper (Table 1)
 PAPER_RESULTS = {
@@ -50,6 +57,47 @@ def get_device():
     elif transformer_config.DEVICE == "cuda" and torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
+
+
+def train_cnn_if_missing():
+    """Train CNN if no trained model exists."""
+    if not (cnn_config.CACHE_DIR / "ensemble_info.pt").exists():
+        print("\n[Auto-train] CNN not found, training...")
+        from cnn.train import main as train_cnn
+        train_cnn()
+        return True
+    return False
+
+
+def train_transformer_if_missing():
+    """Train Transformer if no trained model exists."""
+    if not (transformer_config.CACHE_DIR / "transformer_ensemble_info.pt").exists():
+        print("\n[Auto-train] Transformer not found, training...")
+        from transformer.train import main as train_transformer
+        train_transformer()
+        return True
+    return False
+
+
+def train_svm_if_missing():
+    """Train SVM if no trained model exists."""
+    if not (svm_config.CACHE_DIR / "svm_model.pkl").exists():
+        print("\n[Auto-train] SVM not found, training...")
+        from svm.train import main as train_svm
+        train_svm()
+        return True
+    return False
+
+
+def train_bert_mlp_if_missing():
+    """Train BERT-MLP if no trained model exists."""
+    if not (bert_mlp_config.CACHE_DIR / "bert_mlp_ensemble_info.pt").exists():
+        print("\n[Auto-train] BERT-MLP not found, training...")
+        from bert_mlp.train import main as train_bert_mlp
+        train_bert_mlp()
+        return True
+    return False
+
 
 
 def load_cnn_ensemble(device):
@@ -120,6 +168,35 @@ def load_svm_model():
         data = pickle.load(f)
 
     return data["model"], data["scaler"]
+
+
+def load_bert_mlp_ensemble(device):
+    """Load BERT-MLP ensemble models."""
+    info_path = bert_mlp_config.CACHE_DIR / "bert_mlp_ensemble_info.pt"
+    if not info_path.exists():
+        return None, None
+
+    info = torch.load(info_path, map_location=device, weights_only=False)
+    top_indices = info["top_indices"]
+    input_dim = info["input_dim"]
+    num_extra_features = info.get("num_extra_features", 0)
+
+    models = []
+    for idx in top_indices:
+        path = bert_mlp_config.CACHE_DIR / f"bert_mlp_fold_{idx}.pt"
+        if path.exists():
+            checkpoint = torch.load(path, map_location=device, weights_only=False)
+            model = BertMLP(
+                input_dim=input_dim,
+                hidden_dim=bert_mlp_config.HIDDEN_DIM,
+                dropout=bert_mlp_config.DROPOUT,
+                num_extra_features=num_extra_features,
+            ).to(device)
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model.eval()
+            models.append(model)
+
+    return models, info
 
 
 def evaluate_cnn(models, info, data, device):
@@ -211,6 +288,38 @@ def evaluate_svm_proper(model, scaler, data, word2vec):
         "recall": recall_score(y, y_pred, zero_division=0),
         "f1": f1_score(y, y_pred, zero_division=0),
     }
+
+
+def evaluate_bert_mlp(models, info, data, device, cache_name):
+    """Evaluate BERT-MLP ensemble on dataset."""
+    num_extra_features = info.get("num_extra_features", 0)
+    use_features = num_extra_features > 0
+
+    embeddings = compute_embeddings(
+        data,
+        bert_mlp_config.CACHE_DIR / cache_name,
+        bert_mlp_config.TRANSFORMER_MODEL,
+    )
+    labels = np.array([item["label"] for item in data])
+    features = bert_extract_features(data, bert_mlp_config) if use_features else None
+
+    dataset = BertEmbeddingDataset(embeddings, labels, features)
+    loader = DataLoader(dataset, batch_size=bert_mlp_config.BATCH_SIZE, shuffle=False)
+
+    all_preds = []
+    for model in models:
+        model.eval()
+        preds = []
+        with torch.no_grad():
+            for batch in loader:
+                emb = batch["embedding"].to(device)
+                feat = batch["features"].to(device) if batch["features"].numel() > 0 else None
+                outputs = model(emb, feat)
+                preds.extend(outputs.cpu().numpy())
+        all_preds.append(preds)
+
+    ensemble_preds = np.mean(all_preds, axis=0)
+    return bert_calculate_metrics(ensemble_preds, labels)
 
 
 def print_table(title, results):
@@ -361,15 +470,24 @@ def main():
     device = get_device()
     print(f"Device: {device}")
 
+    # Auto-train missing models
+    print("\nChecking for trained models...")
+    train_cnn_if_missing()
+    train_transformer_if_missing()
+    train_svm_if_missing()
+    train_bert_mlp_if_missing()
+
     # Load all models
     print("\nLoading models...")
     cnn_models, cnn_info = load_cnn_ensemble(device)
     transformer_models, transformer_info = load_transformer_ensemble(device)
     svm_model, svm_scaler = load_svm_model()
+    bert_mlp_models, bert_mlp_info = load_bert_mlp_ensemble(device)
 
     print(f"  CNN: {len(cnn_models) if cnn_models else 0} models")
     print(f"  Transformer: {len(transformer_models) if transformer_models else 0} models")
     print(f"  SVM: {'loaded' if svm_model else 'not found'}")
+    print(f"  BERT-MLP: {len(bert_mlp_models) if bert_mlp_models else 0} models")
 
     # Load word2vec for SVM
     word2vec = None
@@ -407,6 +525,14 @@ def main():
         else:
             results.append(("SVM (Ours)", None))
 
+        if bert_mlp_models:
+            metrics = evaluate_bert_mlp(
+                bert_mlp_models, bert_mlp_info, data, device, "test_byarticle_bert_mlp.pkl"
+            )
+            results.append(("BERT-MLP (Ours)", metrics))
+        else:
+            results.append(("BERT-MLP (Ours)", None))
+
         results_by_article = results
         print_table("By-Article Test Set", results)
         print_paper_reference("by_article")
@@ -440,6 +566,14 @@ def main():
             results.append(("SVM (Ours)", metrics))
         else:
             results.append(("SVM (Ours)", None))
+
+        if bert_mlp_models:
+            metrics = evaluate_bert_mlp(
+                bert_mlp_models, bert_mlp_info, data, device, "test_bypublisher_bert_mlp.pkl"
+            )
+            results.append(("BERT-MLP (Ours)", metrics))
+        else:
+            results.append(("BERT-MLP (Ours)", None))
 
         results_by_publisher = results
         print_table("By-Publisher Test Set", results)

@@ -77,6 +77,16 @@ python -m transformer.evaluate
 python -m svm.evaluate
 ```
 
+### Interpretability Visualization
+
+Generate token-level attribution heatmaps:
+
+```bash
+python -m transformer.interpret --article-id "0000001" --output output/
+python -m transformer.interpret --text "Your article text here" --output output/
+```
+
+
 ## Results
 
 | Model       | Approach                    | By-Article Acc |

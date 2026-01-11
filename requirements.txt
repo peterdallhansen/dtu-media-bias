@@ -9,3 +9,5 @@ vaderSentiment>=3.3.0
 spacy>=3.5.0
 flair>=0.13.0
 transformers>=4.30.0
+captum>=0.7.0
+matplotlib>=3.7.0
