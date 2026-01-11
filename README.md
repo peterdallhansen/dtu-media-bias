@@ -43,38 +43,38 @@ pip install -r requirements.txt
 
 ## Dataset
 
-The dataset is automatically downloaded from Zenodo on first run. Alternatively, download from [SemEval-2019 Task 4](https://pan.webis.de/semeval19/semeval19-web/).
+The project uses the [News articles for political bias classification](https://www.kaggle.com/datasets/gandpablo/news-articles-for-political-bias-classification) dataset from Kaggle.
+
+The dataset is automatically downloaded/processed on the first run of `preprocess.py`.
+
+### Prerequisites
+- `kagglehub` must be installed:
+  ```bash
+  pip install kagglehub
+  ```
 
 ## Usage
 
-### Preprocessing
+1. **Preprocess Data**
+   Downloads and prepares the dataset (train/test split):
+   ```bash
+   python preprocess.py
+   ```
 
-```bash
-python preprocess.py
-```
+2. **Evaluate (and Auto-Train)**
+   The easiest way to run the project is via the unified evaluation script. It will automatically train any missing models (CNN, Transformer, SVM, BERT-MLP) and then evaluate them.
+   ```bash
+   python evaluate.py
+   ```
 
-### Training
+### Individual Model Training
+If you prefer to train models individually:
 
 ```bash
 python -m cnn.train
 python -m transformer.train
 python -m svm.train
-```
-
-### Evaluation
-
-Evaluate all models:
-
-```bash
-python evaluate.py
-```
-
-Or evaluate individually:
-
-```bash
-python -m cnn.evaluate
-python -m transformer.evaluate
-python -m svm.evaluate
+python -m bert_mlp.train
 ```
 
 ### Interpretability Visualization

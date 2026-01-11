@@ -35,18 +35,10 @@ from bert_mlp.utils import extract_features as bert_extract_features
 import bert_mlp.config as bert_mlp_config
 
 
-# Reference values from SemEval-2019 Task 4 paper (Table 1)
+# Empty references (No reference paper for Kaggle dataset)
 PAPER_RESULTS = {
-    "by_article": [
-        ("Bertha von Suttner", 0.822, 0.871, 0.755, 0.809),
-        ("Vernon Fenwick", 0.820, 0.815, 0.828, 0.821),
-        ("Sally Smedley", 0.809, 0.823, 0.787, 0.805),
-        ("Tom Jumbo Grumbo", 0.806, 0.858, 0.732, 0.790),
-    ],
-    "by_publisher": [
-        ("Tintin", 0.706, 0.742, 0.632, 0.683),
-        ("Joseph Rouletabille", 0.680, 0.640, 0.827, 0.721),
-    ],
+    "by_article": [],
+    "by_publisher": []
 }
 
 
@@ -351,6 +343,13 @@ def print_paper_reference(dataset_key):
     print(f"{'Team':<25} {'Acc':>8} {'Prec':>8} {'Recall':>8} {'F1':>8}")
     print("-" * 70)
 
+    print("-" * 70)
+
+    if not PAPER_RESULTS[dataset_key]:
+        print("No reference results available for this dataset.")
+        print("-" * 70)
+        return
+
     for name, acc, prec, rec, f1 in PAPER_RESULTS[dataset_key]:
         print(f"{name:<25} {acc:>8.3f} {prec:>8.3f} {rec:>8.3f} {f1:>8.3f}")
 
@@ -500,8 +499,8 @@ def main():
 
     # By-article test set
     try:
-        print("\nEvaluating on by-article test set...")
-        data = load_cached_data("test_byarticle")
+        print("\nEvaluating on Test Set...")
+        data = load_cached_data("test")
 
         results = []
 
@@ -534,53 +533,12 @@ def main():
             results.append(("BERT-MLP (Ours)", None))
 
         results_by_article = results
-        print_table("By-Article Test Set", results)
+        print_table("Test Set Results", results)
         print_paper_reference("by_article")
 
     except FileNotFoundError:
         print("By-article test set not found.")
 
-    # By-publisher test set
-    try:
-        print("\nEvaluating on by-publisher test set...")
-        data = load_cached_data("test_bypublisher")
-
-        results = []
-
-        if cnn_models:
-            metrics = evaluate_cnn(cnn_models, cnn_info, data, device)
-            results.append(("CNN (Ours)", metrics))
-        else:
-            results.append(("CNN (Ours)", None))
-
-        if transformer_models:
-            metrics = evaluate_transformer(
-                transformer_models, transformer_info, data, device, "test_bypublisher_transformer.pkl"
-            )
-            results.append(("Transformer (Ours)", metrics))
-        else:
-            results.append(("Transformer (Ours)", None))
-
-        if svm_model:
-            metrics = evaluate_svm_proper(svm_model, svm_scaler, data, word2vec)
-            results.append(("SVM (Ours)", metrics))
-        else:
-            results.append(("SVM (Ours)", None))
-
-        if bert_mlp_models:
-            metrics = evaluate_bert_mlp(
-                bert_mlp_models, bert_mlp_info, data, device, "test_bypublisher_bert_mlp.pkl"
-            )
-            results.append(("BERT-MLP (Ours)", metrics))
-        else:
-            results.append(("BERT-MLP (Ours)", None))
-
-        results_by_publisher = results
-        print_table("By-Publisher Test Set", results)
-        print_paper_reference("by_publisher")
-
-    except FileNotFoundError:
-        pass
 
     # Print LaTeX tables at the end
     print_latex_tables(results_by_article, results_by_publisher)
