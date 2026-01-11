@@ -10,7 +10,7 @@ Detecting political bias in news articles is an increasingly important task in t
 
 ## Pipeline
 
-![Pipeline Diagram](Pipeline.png)
+![Pipeline Diagram](pipeline.svg)
 
 ## Project Structure
 
