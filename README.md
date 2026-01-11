@@ -1,37 +1,35 @@
 # Explaining Political Bias Classification in News Articles using CNNs and Transformers
 
-A deep learning project for detecting hyperpartisan (politically biased) news articles using Convolutional Neural Networks with Word2Vec embeddings. The model is trained on the SemEval-2019 Task 4 Hyperpartisan News Detection dataset.
+A deep learning project for detecting and explaining hyperpartisan (politically biased) news articles. The models are trained on the SemEval-2019 Task 4 Hyperpartisan News Detection dataset.
 
 ## Abstract
 
-Detecting political bias in news articles is an increasingly important task in the era of misinformation and polarized media. In this project, we implement a CNN-based approach for binary classification of news articles as hyperpartisan or mainstream. Using pre-trained Word2Vec embeddings and multi-kernel convolutions, we extract n-gram features from article text to capture linguistic patterns indicative of political bias. Our model is evaluated on the SemEval-2019 Hyperpartisan News Detection benchmark using accuracy, precision, recall, and F1-score metrics.
-
-## Pipeline
-
-<!-- TODO: Add LucidChart pipeline diagram -->
-
-![Pipeline Diagram](Pipeline.png)]
-
-_Pipeline diagram showing data preprocessing, model architecture, and evaluation flow._
+Detecting political bias in news articles is an increasingly important task in the era of misinformation and polarized media. In this project, we implement multiple approaches for binary classification of news articles as hyperpartisan or mainstream: a CNN with GloVe embeddings, a transformer-based classifier using DistilBERT, and an SVM baseline. Beyond classification, we explore interpretability methods to identify which tokens contribute most to model decisions.
 
 ## Project Structure
 
 ```
 .
-├── config.py          # Hyperparameters and paths
 ├── preprocess.py      # XML parsing and text preprocessing
-├── dataset.py         # PyTorch Dataset class
-├── model.py           # CNN model architecture
-├── train.py           # Training loop
-├── evaluate.py        # Model evaluation
-├── utils.py           # Vocabulary, embeddings, metrics
-├── requirements.txt   # Dependencies
-└── Dataset/           # SemEval-2019 Task 4 data (not included)
+├── evaluate.py        # Unified evaluation across all models
+├── cnn/               # CNN with GloVe embeddings
+│   ├── config.py
+│   ├── model.py
+│   ├── train.py
+│   └── evaluate.py
+├── transformer/       # DistilBERT embeddings + classifier
+│   ├── config.py
+│   ├── model.py
+│   ├── train.py
+│   └── evaluate.py
+├── svm/               # SVM baseline (averaged GloVe + RBF kernel)
+│   ├── config.py
+│   ├── train.py
+│   └── evaluate.py
+└── cache/             # Preprocessed data and model checkpoints
 ```
 
 ## Installation
-
-To install the required packages:
 
 ```bash
 pip install -r requirements.txt
@@ -39,62 +37,53 @@ pip install -r requirements.txt
 
 ## Dataset
 
-This project uses the [SemEval-2019 Task 4](https://pan.webis.de/semeval19/semeval19-web/) Hyperpartisan News Detection dataset. Download the dataset and place the XML files in the `Dataset/` directory:
-
-- `articles-training-byarticle-20181122.xml`
-- `ground-truth-training-byarticle-20181122.xml`
-- `articles-test-byarticle-20181207.xml`
-- `ground-truth-test-byarticle-20181207.xml`
+The dataset is automatically downloaded from Zenodo on first run. Alternatively, download from [SemEval-2019 Task 4](https://pan.webis.de/semeval19/semeval19-web/).
 
 ## Usage
 
-### 1. Preprocess the data
+### Preprocessing
 
 ```bash
 python preprocess.py
 ```
 
-This parses the XML files, cleans and tokenizes the text, and caches the processed data.
-
-### 2. Train the model
+### Training
 
 ```bash
-python train.py
+python -m cnn.train
+python -m transformer.train
+python -m svm.train
 ```
 
-Trains the CNN model and saves the best checkpoint based on F1-score.
+### Evaluation
 
-### 3. Evaluate
-
+Evaluate all models:
 ```bash
 python evaluate.py
 ```
 
-Loads the best model and evaluates on the test set.
+Or evaluate individually:
+```bash
+python -m cnn.evaluate
+python -m transformer.evaluate
+python -m svm.evaluate
+```
 
-## Model Architecture
+## Results
 
-The model uses a multi-kernel CNN architecture:
+| Model | Approach | By-Article Acc |
+|-------|----------|----------------|
+| CNN | GloVe + multi-kernel CNN | ~0.65 |
+| Transformer | DistilBERT embeddings + MLP | ~0.82 |
+| SVM | Averaged GloVe + RBF kernel | ~0.81 |
 
-- **Embedding Layer**: Word2Vec (Google News 300d) with fine-tuning
-- **Convolutional Layers**: Parallel convolutions with kernel sizes [3, 4, 5]
-- **Batch Normalization**: Applied after each convolution
-- **Pooling**: Global max pooling
-- **Dropout**: 0.5 for regularization
-- **Output**: Sigmoid activation for binary classification
+### Reference (SemEval-2019)
+
+| Team | Approach | By-Article Acc |
+|------|----------|----------------|
+| Bertha von Suttner | ELMo + CNN | 0.822 |
+| Tom Jumbo Grumbo | GloVe + SVM | 0.806 |
 
 ## Configuration
 
-Key hyperparameters (see `config.py`):
-
-| Parameter           | Value     |
-| ------------------- | --------- |
-| Embedding Dimension | 300       |
-| Max Sequence Length | 512       |
-| Vocabulary Size     | 50,000    |
-| CNN Filters         | 128       |
-| Kernel Sizes        | [3, 4, 5] |
-| Dropout             | 0.5       |
-| Batch Size          | 32        |
-| Learning Rate       | 1e-3      |
-| Epochs              | 20        |
+See `cnn/config.py`, `transformer/config.py`, and `svm/config.py` for hyperparameters.
