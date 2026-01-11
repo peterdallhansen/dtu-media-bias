@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, Subset
 from sklearn.model_selection import StratifiedKFold
 from tqdm import tqdm
 from . import config
+from device import get_device
 from preprocess import load_cached_data
 from .utils import load_glove, build_vocab, create_embedding_matrix, calculate_metrics
 from .dataset import HyperpartisanDataset
@@ -151,19 +152,11 @@ def ensemble_predict(models, loader, device):
     return ensemble_preds
 
 
-def get_device():
-    if config.DEVICE == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    elif config.DEVICE == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
-
-
 def main():
     np.random.seed(config.RANDOM_SEED)
     torch.manual_seed(config.RANDOM_SEED)
 
-    device = get_device()
+    device = get_device(config.DEVICE)
     print(f"Device: {device}")
 
     train_data = load_cached_data("train")

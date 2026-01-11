@@ -18,6 +18,9 @@ try:
 except ImportError:
     spacy = None
 
+# Batch size for NER processing (tune based on available RAM)
+NER_BATCH_SIZE = 1000
+
 # -------------------------------------------------------------------
 # Utility Functions (Generic)
 # -------------------------------------------------------------------
@@ -39,13 +42,32 @@ def extract_sentiment_features(text, analyzer):
     return [scores['compound'], scores['pos'], scores['neg']]
 
 
-def extract_ner_features(text, nlp):
-    doc = nlp(text[:10000])
+def extract_ner_features_from_doc(doc):
+    """Extract NER features from a pre-processed spaCy doc."""
     counts = {'PERSON': 0, 'ORG': 0, 'GPE': 0, 'NORP': 0, 'EVENT': 0}
     for ent in doc.ents:
         if ent.label_ in counts:
             counts[ent.label_] += 1
     return [math.log1p(counts[k]) for k in ['PERSON', 'ORG', 'GPE', 'NORP', 'EVENT']]
+
+
+def batch_ner_processing(texts, nlp, batch_size=NER_BATCH_SIZE, n_process=-1):
+    """Process texts through spaCy NER in batches using nlp.pipe() for 10-100x speedup.
+
+    Args:
+        n_process: Number of CPU processes. -1 = auto (use all cores), 1 = single process
+    """
+    import os
+    if n_process == -1:
+        n_process = os.cpu_count() or 1
+
+    results = []
+    # nlp.pipe is much faster than calling nlp() individually
+    # n_process > 1 enables multiprocessing for additional speedup
+    for doc in tqdm(nlp.pipe(texts, batch_size=batch_size, n_process=n_process),
+                    total=len(texts), desc=f"NER Processing ({n_process} workers)"):
+        results.append(extract_ner_features_from_doc(doc))
+    return results
 
 
 def get_config_hash():
@@ -116,55 +138,87 @@ def extract_date_features(date_str):
 
 
 def parse_csv_articles(csv_path):
-    articles = []
-    
-    # Initialize analyzers
-    analyzer = SentimentIntensityAnalyzer() if config.USE_SENTIMENT_FEATURES else None
-    nlp = spacy.load('en_core_web_sm', disable=['parser']) if (config.USE_NER_FEATURES and spacy) else None
-    
+    """Parse CSV with optimized batch processing for NER and sentiment."""
     print(f"Parsing {csv_path}...")
-    
+
+    # Step 1: Read all rows and do basic text processing
+    print("Step 1/4: Reading CSV and basic text processing...")
+    rows_data = []
     with open(csv_path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
-        rows = list(reader)
-        
-        for i, row in enumerate(tqdm(rows, desc="Processing Articles")):
+        for i, row in enumerate(tqdm(reader, desc="Reading CSV")):
             article_id = hashlib.md5(row.get('url', str(i)).encode()).hexdigest()[:8]
-            
             title = row.get('title', '')
             date_str = row.get('date', '')
             text_raw = row.get('page_text', '')
             bias_label = row.get('bias', '')
-            
             cleaned_text = clean_text(title + ' ' + text_raw)
-            tokens = tokenize(cleaned_text)
-            
-            label = map_label(bias_label)
-            
-            features = []
-            if config.USE_DATE_FEATURES:
-                features += extract_date_features(date_str)
-            
-            # No hyperlink features for Kaggle
-            
-            if config.USE_SENTIMENT_FEATURES:
-                features += extract_sentiment_features(text_raw, analyzer)
-                
-            if config.USE_NER_FEATURES and nlp:
-                features += extract_ner_features(text_raw, nlp)
-            
-            article_data = {
+
+            rows_data.append({
                 'id': article_id,
                 'title': title,
-                'published': date_str,
-                'text': cleaned_text,
-                'tokens': tokens,
-                'hyperlinks': [], # Empty
-                'features': features,
-                'label': label,
-                'original_label': bias_label
-            }
-            articles.append(article_data)
+                'date_str': date_str,
+                'text_raw': text_raw,  # Keep raw for transformers
+                'bias_label': bias_label,
+                'cleaned_text': cleaned_text,
+                'tokens': tokenize(cleaned_text),
+                'label': map_label(bias_label),
+            })
+
+    n = len(rows_data)
+    print(f"  Loaded {n} articles")
+
+    # Step 2: Batch sentiment analysis (fast, but still worth batching)
+    sentiment_features = None
+    if config.USE_SENTIMENT_FEATURES:
+        print("Step 2/4: Batch sentiment analysis...")
+        analyzer = SentimentIntensityAnalyzer()
+        sentiment_features = []
+        for row in tqdm(rows_data, desc="Sentiment Analysis"):
+            sentiment_features.append(extract_sentiment_features(row['text_raw'], analyzer))
+    else:
+        print("Step 2/4: Skipping sentiment (disabled)")
+
+    # Step 3: Batch NER processing (the big speedup - uses nlp.pipe())
+    ner_features = None
+    if config.USE_NER_FEATURES and spacy:
+        print("Step 3/4: Batch NER processing (this is the slow part)...")
+        # Only load components we need - disable everything except NER
+        nlp = spacy.load('en_core_web_sm', disable=['parser', 'tagger', 'lemmatizer', 'attribute_ruler'])
+        # Truncate texts for NER (spaCy has memory issues with very long texts)
+        ner_texts = [row['text_raw'][:10000] for row in rows_data]
+        ner_features = batch_ner_processing(ner_texts, nlp, batch_size=NER_BATCH_SIZE)
+    else:
+        print("Step 3/4: Skipping NER (disabled)")
+
+    # Step 4: Combine everything into final articles
+    print("Step 4/4: Combining features...")
+    articles = []
+    for i, row in enumerate(tqdm(rows_data, desc="Building Articles")):
+        features = []
+
+        if config.USE_DATE_FEATURES:
+            features += extract_date_features(row['date_str'])
+
+        if sentiment_features:
+            features += sentiment_features[i]
+
+        if ner_features:
+            features += ner_features[i]
+
+        article_data = {
+            'id': row['id'],
+            'title': row['title'],
+            'published': row['date_str'],
+            'text': row['cleaned_text'],  # Cleaned for CNN
+            'text_raw': row['text_raw'],  # Raw for transformers
+            'tokens': row['tokens'],
+            'hyperlinks': [],
+            'features': features,
+            'label': row['label'],
+            'original_label': row['bias_label']
+        }
+        articles.append(article_data)
 
     return articles
 

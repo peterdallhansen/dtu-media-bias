@@ -17,17 +17,9 @@ from bert_mlp import config
 from bert_mlp.model import BertMLP
 from bert_mlp.dataset import BertEmbeddingDataset
 from bert_mlp.utils import calculate_metrics, extract_features
+from device import get_device
 from preprocess import load_cached_data
 from transformer.utils import compute_embeddings
-
-
-def get_device():
-    """Get available compute device."""
-    if config.DEVICE == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    elif config.DEVICE == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
 
 
 def load_ensemble(device):
@@ -72,7 +64,11 @@ def evaluate_ensemble(models, embeddings, labels, features, device):
         with torch.no_grad():
             for batch in loader:
                 emb = batch["embedding"].to(device)
-                feat = batch["features"].to(device) if batch["features"].numel() > 0 else None
+                feat = (
+                    batch["features"].to(device)
+                    if batch["features"].numel() > 0
+                    else None
+                )
                 outputs = model(emb, feat)
                 preds.extend(outputs.cpu().numpy())
         all_preds.append(preds)
@@ -82,7 +78,7 @@ def evaluate_ensemble(models, embeddings, labels, features, device):
 
 
 def main():
-    device = get_device()
+    device = get_device(config.DEVICE)
     print(f"Device: {device}")
 
     # Load ensemble

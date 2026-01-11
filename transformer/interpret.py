@@ -1,5 +1,3 @@
-
-
 import sys
 from pathlib import Path
 
@@ -15,8 +13,8 @@ from transformers import DistilBertModel, DistilBertTokenizerFast
 from captum.attr import LayerIntegratedGradients
 
 import transformer.config as config
+from device import get_device
 from preprocess import load_cached_data
-
 
 
 class InterpretableClassifier(nn.Module):
@@ -24,19 +22,19 @@ class InterpretableClassifier(nn.Module):
     def __init__(self, classifier_state_dict, num_extra_features=0, hidden_dim=256):
         super().__init__()
         self.bert = DistilBertModel.from_pretrained(config.TRANSFORMER_MODEL)
-        
+
         # Create a text-only classifier (no extra features)
         self.fc1 = nn.Linear(768, hidden_dim)
         self.bn1 = nn.BatchNorm1d(hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, 1)
-        
+
         # Load weights, truncating fc1 if extra features were used during training
         trained_fc1_weight = classifier_state_dict["fc1.weight"]
         if trained_fc1_weight.shape[1] > 768:
             self.fc1.weight.data = trained_fc1_weight[:, :768]
         else:
             self.fc1.weight.data = trained_fc1_weight
-        
+
         self.fc1.bias.data = classifier_state_dict["fc1.bias"]
         self.bn1.weight.data = classifier_state_dict["bn1.weight"]
         self.bn1.bias.data = classifier_state_dict["bn1.bias"]
@@ -44,7 +42,7 @@ class InterpretableClassifier(nn.Module):
         self.bn1.running_var = classifier_state_dict["bn1.running_var"]
         self.fc2.weight.data = classifier_state_dict["fc2.weight"]
         self.fc2.bias.data = classifier_state_dict["fc2.bias"]
-        
+
         # Freeze parameters for inference
         self.eval()
         for param in self.parameters():
@@ -53,7 +51,7 @@ class InterpretableClassifier(nn.Module):
     def forward(self, input_ids, attention_mask):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         cls_embedding = outputs.last_hidden_state[:, 0]  # [CLS] token
-        
+
         # MLP classifier head
         x = self.fc1(cls_embedding)
         x = self.bn1(x)
@@ -64,7 +62,6 @@ class InterpretableClassifier(nn.Module):
     def predict_proba(self, input_ids, attention_mask):
         logits = self.forward(input_ids, attention_mask)
         return torch.sigmoid(logits).squeeze(-1)
-
 
 
 class TokenAttributor:
@@ -78,8 +75,7 @@ class TokenAttributor:
 
         # Initialize Layer Integrated Gradients on word embeddings
         self.lig = LayerIntegratedGradients(
-            self._forward_func,
-            self.model.bert.embeddings.word_embeddings
+            self._forward_func, self.model.bert.embeddings.word_embeddings
         )
 
     def _forward_func(self, input_ids, attention_mask):
@@ -117,7 +113,7 @@ class TokenAttributor:
 
         # Sum attribution over embedding dimensions to get per-token scores
         token_attributions = attributions.sum(dim=-1).squeeze(0)
-        
+
         # Negate for mainstream attribution
         if target_class == 0:
             token_attributions = -token_attributions
@@ -126,7 +122,6 @@ class TokenAttributor:
         tokens = self.tokenizer.convert_ids_to_tokens(input_ids.squeeze(0))
 
         return tokens, token_attributions.detach().cpu(), prediction
-
 
 
 def merge_wordpieces(tokens, scores):
@@ -174,30 +169,34 @@ def normalize_scores(scores):
     return scores
 
 
-
-def plot_text_heatmap(tokens, scores, title="Token Attribution Heatmap",
-                      max_tokens_per_line=15, figsize=(14, None)):
+def plot_text_heatmap(
+    tokens,
+    scores,
+    title="Token Attribution Heatmap",
+    max_tokens_per_line=15,
+    figsize=(14, None),
+):
     # Split into lines for better readability
     lines = []
     current_line_tokens = []
     current_line_scores = []
-    
+
     for token, score in zip(tokens, scores.tolist()):
         current_line_tokens.append(token)
         current_line_scores.append(score)
-        
+
         if len(current_line_tokens) >= max_tokens_per_line:
             lines.append((current_line_tokens, current_line_scores))
             current_line_tokens = []
             current_line_scores = []
-    
+
     if current_line_tokens:
         lines.append((current_line_tokens, current_line_scores))
 
     # Calculate figure height based on number of lines
     n_lines = len(lines)
     height = figsize[1] if figsize[1] else max(2, 0.6 * n_lines + 1.5)
-    
+
     fig, ax = plt.subplots(figsize=(figsize[0], height))
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
@@ -212,31 +211,29 @@ def plot_text_heatmap(tokens, scores, title="Token Attribution Heatmap",
 
     for line_tokens, line_scores in lines:
         x_position = 0.02
-        
+
         for token, score in zip(line_tokens, line_scores):
             # Get background color based on score
             color = cmap(norm(score))
-            
+
             # Determine text color for readability
             luminance = 0.299 * color[0] + 0.587 * color[1] + 0.114 * color[2]
             text_color = "white" if luminance < 0.5 else "black"
-            
+
             # Add text with colored background
             text = ax.text(
-                x_position, y_position,
+                x_position,
+                y_position,
                 f" {token} ",
                 fontsize=10,
                 fontfamily="monospace",
                 verticalalignment="center",
                 bbox=dict(
-                    facecolor=color,
-                    edgecolor="none",
-                    pad=2,
-                    boxstyle="round,pad=0.1"
+                    facecolor=color, edgecolor="none", pad=2, boxstyle="round,pad=0.1"
                 ),
                 color=text_color,
             )
-            
+
             # Get text width for positioning next token
             fig.canvas.draw()
             bbox = text.get_window_extent()
@@ -253,8 +250,9 @@ def plot_text_heatmap(tokens, scores, title="Token Attribution Heatmap",
     # Add colorbar legend
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = plt.colorbar(sm, ax=ax, orientation="horizontal", 
-                        fraction=0.05, pad=0.02, aspect=40)
+    cbar = plt.colorbar(
+        sm, ax=ax, orientation="horizontal", fraction=0.05, pad=0.02, aspect=40
+    )
     cbar.set_label("← Mainstream | Hyperpartisan →", fontsize=9)
     cbar.set_ticks([-1, 0, 1])
 
@@ -306,27 +304,20 @@ def generate_html_heatmap(tokens, scores, title="Token Attribution"):
             f'title="Score: {score:.3f}">{token}</span>'
         )
 
-    html_parts.extend([
-        "</div>",
-        "<div class='legend'>",
-        "<div class='legend-item'><span class='legend-color' style='background: rgb(255,77,77);'></span> Hyperpartisan (+)</div>",
-        "<div class='legend-item'><span class='legend-color' style='background: rgb(255,255,255); border: 1px solid #ccc;'></span> Neutral (0)</div>",
-        "<div class='legend-item'><span class='legend-color' style='background: rgb(77,77,255);'></span> Mainstream (-)</div>",
-        "</div>",
-        "<p class='note'>Hover over tokens to see exact attribution scores.</p>",
-        "</body></html>",
-    ])
+    html_parts.extend(
+        [
+            "</div>",
+            "<div class='legend'>",
+            "<div class='legend-item'><span class='legend-color' style='background: rgb(255,77,77);'></span> Hyperpartisan (+)</div>",
+            "<div class='legend-item'><span class='legend-color' style='background: rgb(255,255,255); border: 1px solid #ccc;'></span> Neutral (0)</div>",
+            "<div class='legend-item'><span class='legend-color' style='background: rgb(77,77,255);'></span> Mainstream (-)</div>",
+            "</div>",
+            "<p class='note'>Hover over tokens to see exact attribution scores.</p>",
+            "</body></html>",
+        ]
+    )
 
     return "\n".join(html_parts)
-
-
-
-def get_device():
-    if config.DEVICE == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    elif config.DEVICE == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
 
 
 def load_model(fold=None):
@@ -336,26 +327,26 @@ def load_model(fold=None):
         raise FileNotFoundError(
             f"Ensemble info not found at {ensemble_path}. Run transformer.train first."
         )
-    
+
     ensemble_info = torch.load(ensemble_path, map_location="cpu", weights_only=True)
-    
+
     if fold is None:
         top_indices = ensemble_info["top_indices"]
         fold = top_indices[-1]
         print(f"Fold {fold} (F1={ensemble_info['fold_scores'][fold]:.4f})")
-    
+
     # Load the fold checkpoint
     checkpoint_path = config.CACHE_DIR / f"transformer_model_fold_{fold}.pt"
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-    
+
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-    
+
     model = InterpretableClassifier(
         classifier_state_dict=checkpoint["model_state_dict"],
         num_extra_features=0,
     )
-    
+
     return model
 
 
@@ -367,7 +358,6 @@ def load_article_by_id(article_id, split="test_byarticle"):
     return None, None
 
 
-
 def main():
     parser = argparse.ArgumentParser(
         description="Generate token-level attribution heatmaps for hyperpartisan classification"
@@ -375,28 +365,45 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--article-id", type=str, help="Article ID from dataset")
     group.add_argument("--text", type=str, help="Raw text to analyze")
-    
-    parser.add_argument("--output", type=str, default="output",
-                        help="Output directory for visualizations")
-    parser.add_argument("--format", choices=["matplotlib", "html", "both"],
-                        default="both", help="Output format")
-    parser.add_argument("--fold", type=int, default=None,
-                        help="Specific model fold to use (default: best)")
-    parser.add_argument("--n-steps", type=int, default=50,
-                        help="Number of integration steps for IG")
-    parser.add_argument("--device", type=str, default=None,
-                        choices=["cpu", "mps", "cuda"],
-                        help="Override device (default: auto-detect)")
-    
+
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="output",
+        help="Output directory for visualizations",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["matplotlib", "html", "both"],
+        default="both",
+        help="Output format",
+    )
+    parser.add_argument(
+        "--fold",
+        type=int,
+        default=None,
+        help="Specific model fold to use (default: best)",
+    )
+    parser.add_argument(
+        "--n-steps", type=int, default=50, help="Number of integration steps for IG"
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        choices=["cpu", "cuda", "cuda"],
+        help="Override device (default: auto-detect)",
+    )
+
     args = parser.parse_args()
 
     # Setup device
     if args.device:
         device = torch.device(args.device)
     else:
-        device = get_device()
+        device = get_device(config.DEVICE)
     print(f"Device: {device}\n")
-    
+
     output_dir = Path(args.output)
     output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -411,7 +418,9 @@ def main():
         if text is None:
             print(f"Article {args.article_id} not found in dataset")
             sys.exit(1)
-        label_str = "hyperpartisan" if label == 1 else "mainstream" if label == 0 else "unknown"
+        label_str = (
+            "hyperpartisan" if label == 1 else "mainstream" if label == 0 else "unknown"
+        )
         print(f"Ground truth: {label_str}")
         output_name = f"attribution_{args.article_id}"
     else:
@@ -425,7 +434,9 @@ def main():
     attributor = TokenAttributor(model, tokenizer, device, n_steps=args.n_steps)
     tokens, scores, prediction = attributor.compute_attributions(text, target_class=1)
 
-    print(f"Prediction: {prediction:.3f} ({'hyperpartisan' if prediction > 0.5 else 'mainstream'})")
+    print(
+        f"Prediction: {prediction:.3f} ({'hyperpartisan' if prediction > 0.5 else 'mainstream'})"
+    )
 
     merged_tokens, merged_scores = merge_wordpieces(tokens, scores)
     normalized_scores = normalize_scores(merged_scores)
@@ -434,7 +445,7 @@ def main():
 
     # Generate visualizations
     title = f"Token Attribution (P(hyperpartisan)={prediction:.2f})"
-    
+
     if args.format in ["matplotlib", "both"]:
         fig = plot_text_heatmap(merged_tokens, normalized_scores, title=title)
         png_path = output_dir / f"{output_name}.png"

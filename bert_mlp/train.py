@@ -20,17 +20,9 @@ from bert_mlp import config
 from bert_mlp.model import BertMLP
 from bert_mlp.dataset import BertEmbeddingDataset
 from bert_mlp.utils import calculate_metrics, extract_features
+from device import get_device
 from preprocess import load_cached_data
 from transformer.utils import compute_embeddings
-
-
-def get_device():
-    """Get available compute device."""
-    if config.DEVICE == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    elif config.DEVICE == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
 
 
 def train_epoch(model, loader, criterion, optimizer, device):
@@ -41,7 +33,9 @@ def train_epoch(model, loader, criterion, optimizer, device):
 
     for batch in tqdm(loader, desc="Training", leave=False):
         emb = batch["embedding"].to(device)
-        features = batch["features"].to(device) if batch["features"].numel() > 0 else None
+        features = (
+            batch["features"].to(device) if batch["features"].numel() > 0 else None
+        )
         labels = batch["label"].to(device)
 
         optimizer.zero_grad()
@@ -67,7 +61,9 @@ def evaluate(model, loader, criterion, device):
     with torch.no_grad():
         for batch in tqdm(loader, desc="Evaluating", leave=False):
             emb = batch["embedding"].to(device)
-            features = batch["features"].to(device) if batch["features"].numel() > 0 else None
+            features = (
+                batch["features"].to(device) if batch["features"].numel() > 0 else None
+            )
             labels = batch["label"].to(device)
 
             outputs = model(emb, features)
@@ -81,13 +77,15 @@ def evaluate(model, loader, criterion, device):
     return total_loss / len(loader), metrics
 
 
-def train_fold(fold_idx, train_indices, val_indices, embeddings, labels, features, device):
+def train_fold(
+    fold_idx, train_indices, val_indices, embeddings, labels, features, device
+):
     """Train a single fold."""
     # Create datasets for this fold
     train_emb = embeddings[train_indices]
     train_labels = labels[train_indices]
     train_features = features[train_indices] if features is not None else None
-    
+
     val_emb = embeddings[val_indices]
     val_labels = labels[val_indices]
     val_features = features[val_indices] if features is not None else None
@@ -109,9 +107,7 @@ def train_fold(fold_idx, train_indices, val_indices, embeddings, labels, feature
 
     criterion = torch.nn.BCELoss()
     optimizer = torch.optim.Adam(
-        model.parameters(), 
-        lr=config.LEARNING_RATE, 
-        weight_decay=config.WEIGHT_DECAY
+        model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=0.5, patience=3
@@ -122,9 +118,11 @@ def train_fold(fold_idx, train_indices, val_indices, embeddings, labels, feature
     patience_counter = 0
 
     for epoch in range(config.NUM_EPOCHS):
-        train_loss, train_metrics = train_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss, train_metrics = train_epoch(
+            model, train_loader, criterion, optimizer, device
+        )
         val_loss, val_metrics = evaluate(model, val_loader, criterion, device)
-        
+
         scheduler.step(val_metrics["f1"])
 
         print(
@@ -134,7 +132,9 @@ def train_fold(fold_idx, train_indices, val_indices, embeddings, labels, feature
 
         if val_metrics["f1"] > best_val_f1:
             best_val_f1 = val_metrics["f1"]
-            best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            best_model_state = {
+                k: v.cpu().clone() for k, v in model.state_dict().items()
+            }
             patience_counter = 0
         else:
             patience_counter += 1
@@ -150,7 +150,7 @@ def main():
     np.random.seed(config.RANDOM_SEED)
     torch.manual_seed(config.RANDOM_SEED)
 
-    device = get_device()
+    device = get_device(config.DEVICE)
     print(f"Device: {device}")
 
     # Load data
@@ -165,7 +165,7 @@ def main():
         config.TRANSFORMER_MODEL,
     )
     labels = np.array([item["label"] for item in train_data])
-    
+
     # Extract extra features
     features = extract_features(train_data, config)
     print(f"Embedding shape: {embeddings.shape}")
@@ -180,8 +180,12 @@ def main():
     fold_scores = []
     print(f"\n{config.NUM_FOLDS}-Fold Cross Validation")
 
-    for fold_idx, (train_indices, val_indices) in enumerate(skf.split(embeddings, labels)):
-        print(f"\nFold {fold_idx + 1}/{config.NUM_FOLDS} (train={len(train_indices)}, val={len(val_indices)})")
+    for fold_idx, (train_indices, val_indices) in enumerate(
+        skf.split(embeddings, labels)
+    ):
+        print(
+            f"\nFold {fold_idx + 1}/{config.NUM_FOLDS} (train={len(train_indices)}, val={len(val_indices)})"
+        )
 
         best_state, best_f1 = train_fold(
             fold_idx, train_indices, val_indices, embeddings, labels, features, device
@@ -194,13 +198,17 @@ def main():
                 "model_state_dict": best_state,
                 "fold": fold_idx,
                 "val_f1": best_f1,
-                "num_extra_features": config.NUM_EXTRA_FEATURES if features is not None else 0,
+                "num_extra_features": (
+                    config.NUM_EXTRA_FEATURES if features is not None else 0
+                ),
             },
             config.CACHE_DIR / f"bert_mlp_fold_{fold_idx}.pt",
         )
         print(f"  Best val F1: {best_f1:.4f}")
 
-    print(f"\nCV Results: mean F1={np.mean(fold_scores):.4f} (+/- {np.std(fold_scores):.4f})")
+    print(
+        f"\nCV Results: mean F1={np.mean(fold_scores):.4f} (+/- {np.std(fold_scores):.4f})"
+    )
 
     # Select top-k models for ensemble
     top_k = min(config.ENSEMBLE_TOP_K, config.NUM_FOLDS)
@@ -213,7 +221,9 @@ def main():
             "fold_scores": fold_scores,
             "top_k": top_k,
             "top_indices": top_indices.tolist(),
-            "num_extra_features": config.NUM_EXTRA_FEATURES if features is not None else 0,
+            "num_extra_features": (
+                config.NUM_EXTRA_FEATURES if features is not None else 0
+            ),
             "input_dim": config.EMBEDDING_DIM,
         },
         config.CACHE_DIR / "bert_mlp_ensemble_info.pt",

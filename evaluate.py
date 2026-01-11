@@ -14,7 +14,12 @@ from torch.utils.data import DataLoader
 
 # Project imports
 from preprocess import load_cached_data
-from cnn.utils import load_glove, build_vocab, create_embedding_matrix, calculate_metrics
+from cnn.utils import (
+    load_glove,
+    build_vocab,
+    create_embedding_matrix,
+    calculate_metrics,
+)
 from cnn.dataset import HyperpartisanDataset
 from cnn.model import HyperpartisanCNN
 import cnn.config as cnn_config
@@ -26,6 +31,7 @@ import transformer.config as transformer_config
 
 from svm.utils import compute_document_vectors
 import svm.config as svm_config
+from device import get_device
 
 # BERT-MLP imports
 from bert_mlp.model import BertMLP
@@ -36,19 +42,7 @@ import bert_mlp.config as bert_mlp_config
 
 
 # Empty references (No reference paper for Kaggle dataset)
-PAPER_RESULTS = {
-    "by_article": [],
-    "by_publisher": []
-}
-
-
-def get_device():
-    """Get available compute device."""
-    if transformer_config.DEVICE == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    elif transformer_config.DEVICE == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
+PAPER_RESULTS = {"by_article": [], "by_publisher": []}
 
 
 def train_cnn_if_missing():
@@ -56,6 +50,7 @@ def train_cnn_if_missing():
     if not (cnn_config.CACHE_DIR / "ensemble_info.pt").exists():
         print("\n[Auto-train] CNN not found, training...")
         from cnn.train import main as train_cnn
+
         train_cnn()
         return True
     return False
@@ -66,6 +61,7 @@ def train_transformer_if_missing():
     if not (transformer_config.CACHE_DIR / "transformer_ensemble_info.pt").exists():
         print("\n[Auto-train] Transformer not found, training...")
         from transformer.train import main as train_transformer
+
         train_transformer()
         return True
     return False
@@ -76,6 +72,7 @@ def train_svm_if_missing():
     if not (svm_config.CACHE_DIR / "svm_model.pkl").exists():
         print("\n[Auto-train] SVM not found, training...")
         from svm.train import main as train_svm
+
         train_svm()
         return True
     return False
@@ -86,10 +83,10 @@ def train_bert_mlp_if_missing():
     if not (bert_mlp_config.CACHE_DIR / "bert_mlp_ensemble_info.pt").exists():
         print("\n[Auto-train] BERT-MLP not found, training...")
         from bert_mlp.train import main as train_bert_mlp
+
         train_bert_mlp()
         return True
     return False
-
 
 
 def load_cnn_ensemble(device):
@@ -104,7 +101,9 @@ def load_cnn_ensemble(device):
     num_extra_features = info.get("num_extra_features", 0)
 
     word2vec = load_glove()
-    embedding_matrix = create_embedding_matrix(vocab, word2vec, cnn_config.EMBEDDING_DIM)
+    embedding_matrix = create_embedding_matrix(
+        vocab, word2vec, cnn_config.EMBEDDING_DIM
+    )
 
     models = []
     for idx in top_indices:
@@ -230,7 +229,9 @@ def evaluate_transformer(models, info, data, device, cache_name):
     features = extract_features(data, transformer_config) if use_features else None
 
     dataset = EmbeddingDataset(embeddings, labels, features)
-    loader = DataLoader(dataset, batch_size=transformer_config.BATCH_SIZE, shuffle=False)
+    loader = DataLoader(
+        dataset, batch_size=transformer_config.BATCH_SIZE, shuffle=False
+    )
 
     all_preds = []
     for model in models:
@@ -258,7 +259,9 @@ def evaluate_svm(model, scaler, data, word2vec):
 
     return {
         "accuracy": (y == y_pred).mean(),
-        "precision": (y_pred[y_pred == 1] == y[y_pred == 1]).mean() if y_pred.sum() > 0 else 0,
+        "precision": (
+            (y_pred[y_pred == 1] == y[y_pred == 1]).mean() if y_pred.sum() > 0 else 0
+        ),
         "recall": (y_pred[y == 1] == 1).mean() if y.sum() > 0 else 0,
         "f1": 0,  # Compute below
     }
@@ -267,7 +270,7 @@ def evaluate_svm(model, scaler, data, word2vec):
 def evaluate_svm_proper(model, scaler, data, word2vec):
     """Evaluate SVM with proper sklearn metrics."""
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-    
+
     X = compute_document_vectors(data, word2vec, svm_config.EMBEDDING_DIM)
     y = np.array([item["label"] for item in data])
 
@@ -305,7 +308,11 @@ def evaluate_bert_mlp(models, info, data, device, cache_name):
         with torch.no_grad():
             for batch in loader:
                 emb = batch["embedding"].to(device)
-                feat = batch["features"].to(device) if batch["features"].numel() > 0 else None
+                feat = (
+                    batch["features"].to(device)
+                    if batch["features"].numel() > 0
+                    else None
+                )
                 outputs = model(emb, feat)
                 preds.extend(outputs.cpu().numpy())
         all_preds.append(preds)
@@ -359,55 +366,57 @@ def print_paper_reference(dataset_key):
 def generate_latex_table(title, our_results, paper_results, sort_by="f1"):
     """
     Generate a LaTeX table with smart ranking and bold best values.
-    
+
     Args:
         title: Table title/caption
         our_results: List of (name, metrics_dict) tuples for our models
         paper_results: List of (name, acc, prec, rec, f1) tuples from paper
         sort_by: Metric to sort by ('accuracy', 'precision', 'recall', 'f1')
-    
+
     Returns:
         LaTeX table string
     """
     # Combine all results into uniform format: (name, acc, prec, rec, f1)
     all_results = []
-    
+
     # Add our results
     for name, metrics in our_results:
         if metrics is not None:
-            all_results.append((
-                name,
-                metrics["accuracy"],
-                metrics["precision"],
-                metrics["recall"],
-                metrics["f1"],
-            ))
-    
+            all_results.append(
+                (
+                    name,
+                    metrics["accuracy"],
+                    metrics["precision"],
+                    metrics["recall"],
+                    metrics["f1"],
+                )
+            )
+
     # Add paper results
     for name, acc, prec, rec, f1 in paper_results:
         all_results.append((name, acc, prec, rec, f1))
-    
+
     if not all_results:
         return ""
-    
+
     # Sort by specified metric (descending - best first)
     metric_idx = {"accuracy": 1, "precision": 2, "recall": 3, "f1": 4}
     sort_idx = metric_idx.get(sort_by, 4)
     all_results.sort(key=lambda x: x[sort_idx], reverse=True)
-    
+
     # Find best values for each metric
     best_acc = max(r[1] for r in all_results)
     best_prec = max(r[2] for r in all_results)
     best_rec = max(r[3] for r in all_results)
     best_f1 = max(r[4] for r in all_results)
-    
+
     def format_val(val, best_val, precision=3):
         """Format value with bold if it's the best."""
         formatted = f"{val:.{precision}f}"
         if abs(val - best_val) < 1e-6:  # Float comparison tolerance
             return f"\\textbf{{{formatted}}}"
         return formatted
-    
+
     # Build LaTeX table
     lines = [
         f"% {title}",
@@ -419,24 +428,28 @@ def generate_latex_table(title, our_results, paper_results, sort_by="f1"):
         "Model & Accuracy & Precision & Recall & F1 \\\\",
         "\\midrule",
     ]
-    
+
     for name, acc, prec, rec, f1 in all_results:
         # Escape underscores for LaTeX
         latex_name = name.replace("_", "\\_")
-        
+
         acc_str = format_val(acc, best_acc)
         prec_str = format_val(prec, best_prec)
         rec_str = format_val(rec, best_rec)
         f1_str = format_val(f1, best_f1)
-        
-        lines.append(f"{latex_name} & {acc_str} & {prec_str} & {rec_str} & {f1_str} \\\\")
-    
-    lines.extend([
-        "\\bottomrule",
-        "\\end{tabular}",
-        "\\end{table}",
-    ])
-    
+
+        lines.append(
+            f"{latex_name} & {acc_str} & {prec_str} & {rec_str} & {f1_str} \\\\"
+        )
+
+    lines.extend(
+        [
+            "\\bottomrule",
+            "\\end{tabular}",
+            "\\end{table}",
+        ]
+    )
+
     return "\n".join(lines)
 
 
@@ -445,7 +458,7 @@ def print_latex_tables(results_by_article, results_by_publisher):
     print("\n" + "=" * 70)
     print("LATEX OUTPUT")
     print("=" * 70)
-    
+
     if results_by_article:
         latex = generate_latex_table(
             "Performance on By-Article Test Set",
@@ -454,7 +467,7 @@ def print_latex_tables(results_by_article, results_by_publisher):
             sort_by="f1",
         )
         print("\n" + latex)
-    
+
     if results_by_publisher:
         latex = generate_latex_table(
             "Performance on By-Publisher Test Set",
@@ -466,7 +479,7 @@ def print_latex_tables(results_by_article, results_by_publisher):
 
 
 def main():
-    device = get_device()
+    device = get_device(transformer_config.DEVICE)
     print(f"Device: {device}")
 
     # Auto-train missing models
@@ -484,7 +497,9 @@ def main():
     bert_mlp_models, bert_mlp_info = load_bert_mlp_ensemble(device)
 
     print(f"  CNN: {len(cnn_models) if cnn_models else 0} models")
-    print(f"  Transformer: {len(transformer_models) if transformer_models else 0} models")
+    print(
+        f"  Transformer: {len(transformer_models) if transformer_models else 0} models"
+    )
     print(f"  SVM: {'loaded' if svm_model else 'not found'}")
     print(f"  BERT-MLP: {len(bert_mlp_models) if bert_mlp_models else 0} models")
 
@@ -512,7 +527,11 @@ def main():
 
         if transformer_models:
             metrics = evaluate_transformer(
-                transformer_models, transformer_info, data, device, "test_transformer.pkl"
+                transformer_models,
+                transformer_info,
+                data,
+                device,
+                "test_transformer.pkl",
             )
             results.append(("Transformer (Ours)", metrics))
         else:
@@ -526,7 +545,11 @@ def main():
 
         if bert_mlp_models:
             metrics = evaluate_bert_mlp(
-                bert_mlp_models, bert_mlp_info, data, device, "test_byarticle_bert_mlp.pkl"
+                bert_mlp_models,
+                bert_mlp_info,
+                data,
+                device,
+                "test_byarticle_bert_mlp.pkl",
             )
             results.append(("BERT-MLP (Ours)", metrics))
         else:
@@ -538,7 +561,6 @@ def main():
 
     except FileNotFoundError:
         print("By-article test set not found.")
-
 
     # Print LaTeX tables at the end
     print_latex_tables(results_by_article, results_by_publisher)

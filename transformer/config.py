@@ -8,7 +8,7 @@ DATA_DIR = CACHE_DIR / "Dataset"
 
 
 RANDOM_SEED = 42
-DEVICE = "mps"  # Should be set to 'cuda' if on nvidia graphics card
+DEVICE = "auto"  # "cuda", "mps", "cpu", or "auto"
 
 # Model
 TRANSFORMER_MODEL = "distilbert-base-uncased"
@@ -32,8 +32,8 @@ NUM_EXTRA_FEATURES_T = (
 )
 
 # Training hyperparameters
-BATCH_SIZE = 32
-LEARNING_RATE = 1e-4
+BATCH_SIZE = 64  # Larger batch = smoother gradients (A100 has plenty of VRAM)
+LEARNING_RATE = 5e-5  # Lower LR for more stable training
 WEIGHT_DECAY = 0.01
 NUM_EPOCHS = 40
 DROPOUT = 0.5

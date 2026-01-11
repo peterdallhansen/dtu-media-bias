@@ -7,7 +7,7 @@ DATA_DIR = CACHE_DIR / "Dataset"
 
 EMBEDDING_DIM = 300
 
-MAX_SEQ_LEN = 512
+MAX_SEQ_LEN = 1024  # Increased from 512 (avg article is 852 tokens)
 MIN_WORD_FREQ = 2
 VOCAB_SIZE = 50000
 
@@ -27,9 +27,9 @@ NUM_EXTRA_FEATURES = (
     + (5 if USE_NER_FEATURES else 0)
 )
 
-BATCH_SIZE = 32
-NUM_WORKERS = 0
-LEARNING_RATE = 1e-4
+BATCH_SIZE = 64  # Larger batch = smoother gradients
+NUM_WORKERS = 4  # Parallel data loading
+LEARNING_RATE = 5e-5  # Lower LR for more stable training
 WEIGHT_DECAY = 0.01
 NUM_EPOCHS = 40
 
@@ -39,4 +39,4 @@ ENSEMBLE_TOP_K = 3
 EARLY_STOPPING_PATIENCE = 5
 
 RANDOM_SEED = 42
-DEVICE = "mps"  # Should be set to 'cuda' if on nvidia graphics card
+DEVICE = "auto"  # "cuda", "mps", "cpu", or "auto"

@@ -7,7 +7,7 @@ from cnn import config as cnn_config
 
 
 def compute_embeddings(data, cache_path, model_name="distilbert-base-uncased"):
-    """Pre-compute transformer document embeddings."""
+    """Pre-compute transformer document embeddings using RAW text."""
     if cache_path.exists():
         print(f"Loading embeddings: {cache_path}")
         with open(cache_path, "rb") as f:
@@ -18,8 +18,12 @@ def compute_embeddings(data, cache_path, model_name="distilbert-base-uncased"):
 
     embeddings = []
     for item in tqdm(data, desc="Embedding"):
-        text = " ".join(item["tokens"][:512])
-        if not text.strip():
+        # Use raw text for transformers (BERT expects proper English)
+        # Fall back to cleaned text if raw not available (backwards compat)
+        text = item.get("text_raw", "") or item.get("title", "") + " " + item.get("text", "")
+        # Truncate to ~512 tokens worth (rough estimate: 4 chars per token)
+        text = text[:2048].strip()
+        if not text:
             text = "empty"
 
         sentence = Sentence(text)

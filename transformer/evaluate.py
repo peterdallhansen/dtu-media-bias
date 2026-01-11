@@ -10,6 +10,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 import transformer.config as config
+from device import get_device
 from preprocess import load_cached_data
 from cnn.utils import calculate_metrics
 from transformer.model import TransformerClassifier
@@ -90,20 +91,14 @@ def print_results(name, results, n_samples):
     print(f"  Precision: {m['precision']:.4f}")
     print(f"  Recall:    {m['recall']:.4f}")
     print(f"  F1:        {m['f1']:.4f}")
-    print(f"  Distribution: {results['gt_pos']}/{results['gt_neg']} (actual), "
-          f"{results['pred_pos']}/{results['pred_neg']} (predicted)")
-
-
-def get_device():
-    if config.DEVICE == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    elif config.DEVICE == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
+    print(
+        f"  Distribution: {results['gt_pos']}/{results['gt_neg']} (actual), "
+        f"{results['pred_pos']}/{results['pred_neg']} (predicted)"
+    )
 
 
 def main():
-    device = get_device()
+    device = get_device(config.DEVICE)
     print(f"Device: {device}")
 
     models, info = load_ensemble(device)
@@ -114,7 +109,9 @@ def main():
     num_extra_features = info.get("num_extra_features", 0)
     use_features = num_extra_features > 0
 
-    print(f"Ensemble: {len(models)} models (folds {[i+1 for i in info['top_indices']]})")
+    print(
+        f"Ensemble: {len(models)} models (folds {[i+1 for i in info['top_indices']]})"
+    )
     print(f"CV scores: {[f'{s:.4f}' for s in info['fold_scores']]}")
     if use_features:
         print(f"Extra features: {num_extra_features} dims")
@@ -139,7 +136,9 @@ def main():
         print("\n" + "=" * 50)
         data = load_cached_data("test_bypublisher")
         embeddings = compute_embeddings(
-            data, config.CACHE_DIR / "test_bypublisher_transformer.pkl", config.TRANSFORMER_MODEL
+            data,
+            config.CACHE_DIR / "test_bypublisher_transformer.pkl",
+            config.TRANSFORMER_MODEL,
         )
         labels = np.array([item["label"] for item in data])
         features = extract_features(data, config) if use_features else None

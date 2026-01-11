@@ -13,6 +13,7 @@ from sklearn.model_selection import StratifiedKFold
 from tqdm import tqdm
 
 import transformer.config as config
+from device import get_device
 from preprocess import load_cached_data
 from cnn.utils import calculate_metrics
 from transformer.model import TransformerClassifier
@@ -61,7 +62,11 @@ def evaluate(model, loader, criterion, device, use_features):
             all_preds.extend(outputs.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
-    return total_loss / len(loader), calculate_metrics(all_preds, all_labels), np.array(all_preds)
+    return (
+        total_loss / len(loader),
+        calculate_metrics(all_preds, all_labels),
+        np.array(all_preds),
+    )
 
 
 def get_predictions(model, loader, device, use_features):
@@ -80,11 +85,13 @@ def train_fold(train_idx, val_idx, embeddings, labels, features, device):
     use_features = features is not None
 
     train_dataset = EmbeddingDataset(
-        embeddings[train_idx], labels[train_idx],
+        embeddings[train_idx],
+        labels[train_idx],
         features[train_idx] if use_features else None,
     )
     val_dataset = EmbeddingDataset(
-        embeddings[val_idx], labels[val_idx],
+        embeddings[val_idx],
+        labels[val_idx],
         features[val_idx] if use_features else None,
     )
 
@@ -125,7 +132,9 @@ def train_fold(train_idx, val_idx, embeddings, labels, features, device):
 
         if val_metrics["f1"] > best_val_f1:
             best_val_f1 = val_metrics["f1"]
-            best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            best_model_state = {
+                k: v.cpu().clone() for k, v in model.state_dict().items()
+            }
             patience_counter = 0
         else:
             patience_counter += 1
@@ -146,19 +155,11 @@ def ensemble_predict(models, loader, device, use_features):
     return np.mean(all_preds, axis=0)
 
 
-def get_device():
-    if config.DEVICE == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    elif config.DEVICE == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
-
-
 def main():
     np.random.seed(config.RANDOM_SEED)
     torch.manual_seed(config.RANDOM_SEED)
 
-    device = get_device()
+    device = get_device(config.DEVICE)
     print(f"Device: {device}")
 
     train_data = load_cached_data("train")
@@ -181,15 +182,21 @@ def main():
     train_labels = np.array([item["label"] for item in train_data])
 
     num_folds = config.NUM_FOLDS
-    skf = StratifiedKFold(n_splits=num_folds, shuffle=True, random_state=config.RANDOM_SEED)
+    skf = StratifiedKFold(
+        n_splits=num_folds, shuffle=True, random_state=config.RANDOM_SEED
+    )
 
     fold_models = []
     fold_scores = []
 
     print(f"\n{num_folds}-Fold Cross-Validation")
 
-    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(train_embeddings, train_labels)):
-        print(f"\nFold {fold_idx + 1}/{num_folds} (train={len(train_idx)}, val={len(val_idx)})")
+    for fold_idx, (train_idx, val_idx) in enumerate(
+        skf.split(train_embeddings, train_labels)
+    ):
+        print(
+            f"\nFold {fold_idx + 1}/{num_folds} (train={len(train_idx)}, val={len(val_idx)})"
+        )
 
         best_state, best_f1 = train_fold(
             train_idx, val_idx, train_embeddings, train_labels, train_features, device
@@ -206,17 +213,22 @@ def main():
         model.load_state_dict(best_state)
         fold_models.append(model)
 
-        torch.save({
-            "model_state_dict": best_state,
-            "fold": fold_idx,
-            "val_f1": best_f1,
-            "input_dim": train_embeddings.shape[1],
-            "num_extra_features": config.NUM_EXTRA_FEATURES_T,
-        }, config.CACHE_DIR / f"transformer_model_fold_{fold_idx}.pt")
+        torch.save(
+            {
+                "model_state_dict": best_state,
+                "fold": fold_idx,
+                "val_f1": best_f1,
+                "input_dim": train_embeddings.shape[1],
+                "num_extra_features": config.NUM_EXTRA_FEATURES_T,
+            },
+            config.CACHE_DIR / f"transformer_model_fold_{fold_idx}.pt",
+        )
 
         print(f"  Best val F1: {best_f1:.4f}")
 
-    print(f"\nCV Results: F1={np.mean(fold_scores):.4f} (+/- {np.std(fold_scores):.4f})")
+    print(
+        f"\nCV Results: F1={np.mean(fold_scores):.4f} (+/- {np.std(fold_scores):.4f})"
+    )
 
     # Select top-k models for ensemble based on validation scores
     top_k = min(config.ENSEMBLE_TOP_K, num_folds)
@@ -224,14 +236,17 @@ def main():
 
     print(f"\nEnsemble: top {top_k} folds {[i+1 for i in top_indices]}")
 
-    torch.save({
-        "num_folds": num_folds,
-        "fold_scores": fold_scores,
-        "top_k": top_k,
-        "top_indices": top_indices.tolist(),
-        "input_dim": train_embeddings.shape[1],
-        "num_extra_features": config.NUM_EXTRA_FEATURES_T,
-    }, config.CACHE_DIR / "transformer_ensemble_info.pt")
+    torch.save(
+        {
+            "num_folds": num_folds,
+            "fold_scores": fold_scores,
+            "top_k": top_k,
+            "top_indices": top_indices.tolist(),
+            "input_dim": train_embeddings.shape[1],
+            "num_extra_features": config.NUM_EXTRA_FEATURES_T,
+        },
+        config.CACHE_DIR / "transformer_ensemble_info.pt",
+    )
 
     print("Done. Run evaluate.py for test results.")
 
