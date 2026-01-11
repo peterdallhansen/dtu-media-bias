@@ -2,7 +2,7 @@
 
 A deep learning project for detecting and explaining hyperpartisan (politically biased) news articles. The models are trained on the SemEval-2019 Task 4 Hyperpartisan News Detection dataset.
 
-This repository accompanies the paper *Explaining Political Bias Classification in News Articles using CNNs and Transformers* (Jensen, Agbesi, Dall-Hansen, 2025).
+This repository accompanies the paper _Explaining Political Bias Classification in News Articles using CNNs and Transformers_ (Jensen, Agbesi, Dall-Hansen, 2025).
 
 ## Abstract
 
@@ -64,11 +64,13 @@ python -m svm.train
 ### Evaluation
 
 Evaluate all models:
+
 ```bash
 python evaluate.py
 ```
 
 Or evaluate individually:
+
 ```bash
 python -m cnn.evaluate
 python -m transformer.evaluate
@@ -77,18 +79,18 @@ python -m svm.evaluate
 
 ## Results
 
-| Model | Approach | By-Article Acc |
-|-------|----------|----------------|
-| CNN | GloVe + multi-kernel CNN | ~0.65 |
-| Transformer | DistilBERT embeddings + MLP | ~0.82 |
-| SVM | Averaged GloVe + RBF kernel | ~0.81 |
+| Model       | Approach                    | By-Article Acc |
+| ----------- | --------------------------- | -------------- |
+| CNN         | GloVe + multi-kernel CNN    | ~0.65          |
+| Transformer | DistilBERT embeddings + MLP | ~0.82          |
+| SVM         | Averaged GloVe + RBF kernel | ~0.81          |
 
 ### Reference (SemEval-2019)
 
-| Team | Approach | By-Article Acc |
-|------|----------|----------------|
-| Bertha von Suttner | ELMo + CNN | 0.822 |
-| Tom Jumbo Grumbo | GloVe + SVM | 0.806 |
+| Team               | Approach    | By-Article Acc |
+| ------------------ | ----------- | -------------- |
+| Bertha von Suttner | ELMo + CNN  | 0.822          |
+| Tom Jumbo Grumbo   | GloVe + SVM | 0.806          |
 
 ## Configuration
 
