@@ -8,6 +8,10 @@ This repository accompanies the paper *Explaining Political Bias Classification 
 
 Detecting political bias in news articles is an increasingly important task in the era of misinformation and polarized media. In this project, we implement multiple approaches for binary classification of news articles as hyperpartisan or mainstream: a CNN with GloVe embeddings, a transformer-based classifier using DistilBERT, and an SVM baseline. Beyond classification, we explore interpretability methods to identify which tokens contribute most to model decisions.
 
+## Pipeline
+
+![Pipeline Diagram](Pipeline.png)
+
 ## Project Structure
 
 ```
