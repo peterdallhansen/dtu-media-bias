@@ -1,82 +1,54 @@
-import re
-import pandas as pd
 import numpy as np
-import string
-import xml
-from lxml import etree
-import nltk
-from nltk.corpus import stopwords
-import html
-from sklearn.model_selection import StratifiedShuffleSplit
-
-'''Helper functions for data reading and cleaning'''
-
-def cleanQuotations(text):
-    # clean quotations
-    text = re.sub(r'[`‘’‛⸂⸃⸌⸍⸜⸝]', "'", text)
-    text = re.sub(r'[„“”]|(\'\')|(,,)', '"', text)
-    return text
-
-def cleanText(text):  
-    # remove URLs
-    text = re.sub(r'(www\S+)|(https?\S+)|(href)', ' ', text)
-    # remove anything within {} or [] or ().
-    text = re.sub(r'\{[^}]*\}|\[[^]]*\]|\([^)]*\)', ' ', text)
-    # remove irrelevant news usage
-    text = re.sub(r'Getty [Ii]mages?|Getty|[Ff]ollow us on [Tt]witter|MORE:|ADVERTISEMENT|VIDEO', ' ', text)
-    # remove @ or # tags or weird ......
-    text = re.sub(r'@\S+|#\S+|\.{2,}', ' ', text)
-    # remove newline in the beginning of the file
-    text = text.lstrip().replace('\n','')
-    # remove multiple white spaces
-    re1 = re.compile(r'  +')
-    text = re1.sub(' ', text)
-    return text
-
-def fixup(text):
-    '''
-    fix some HTML codes and white spaces (from Jeremy Howard)
-    '''
-    text = text.replace('#39;', "'").replace('amp;', '&').replace('#146;', "'").replace('nbsp;', ' ') \
-    .replace('#36;', '$').replace('\\n', "\n").replace('quot;', "'").replace('<br />', "\n").replace('\\"', '"')\
-    .replace('<unk>','u_n').replace(' @.@ ','.').replace(' @-@ ','-').replace('\\', ' \\ ')
-    return html.unescape(text)
-
-def textCleaning(title, text):
-    title = cleanQuotations(title)
-    text = cleanQuotations(text)
-    text = cleanText(fixup(text))
-    return title + ". " + text
+from collections import Counter
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import gensim.downloader as api
 
 
-def customTokenize(text, rm_stopwords=False):
-    '''
-    lower, strip numbers and punctuation, remove stop words
-    '''
-    tokens = nltk.word_tokenize(text)
-    tokens = [w.lower() for w in tokens]
-    words = [word for word in tokens if word.isalpha()]
-    if rm_stopwords:
-        stop_words = set(stopwords.words('english'))
-        words = [w for w in words if not w in stop_words]
-    return words
+def load_word2vec():
+    print("Loading Word2Vec embeddings (will download if not cached)...")
+    model = api.load('word2vec-google-news-300')
+    return model
 
-def fixedTestSplit(labels):
-    '''
-    split into training and held-out test set with balanced class
-    '''
-    sss = StratifiedShuffleSplit(n_splits=1, test_size=0.5, random_state = 1)
-    split_idx = list(sss.split(np.zeros(len(labels)), labels))[0]
-    return split_idx[0], split_idx[1]
 
-class GroundTruthHandler(xml.sax.ContentHandler):
-    '''
-    class for reading labels
-    '''
-    def __init__(self, gt):
-        xml.sax.ContentHandler.__init__(self)
-        self.gt = gt
+def build_vocab(articles, min_freq=2, max_size=50000):
+    word_counts = Counter()
+    for article in articles:
+        word_counts.update(article['tokens'])
 
-    def startElement(self, name, attrs):
-        if name == "article":
-            self.gt.append(attrs.getValue("bias"))
+    vocab = {'<PAD>': 0, '<UNK>': 1}
+    for word, count in word_counts.most_common(max_size - 2):
+        if count >= min_freq:
+            vocab[word] = len(vocab)
+    return vocab
+
+
+def create_embedding_matrix(vocab, word2vec_model, dim=300):
+    matrix = np.random.uniform(-0.25, 0.25, (len(vocab), dim)).astype(np.float32)
+    matrix[0] = np.zeros(dim)
+
+    found = 0
+    for word, idx in vocab.items():
+        if word in word2vec_model:
+            matrix[idx] = word2vec_model[word]
+            found += 1
+
+    print(f"Found {found}/{len(vocab)} words in Word2Vec")
+    return matrix
+
+
+def tokens_to_ids(tokens, vocab, max_len):
+    ids = [vocab.get(t, vocab['<UNK>']) for t in tokens[:max_len]]
+    padding = [vocab['<PAD>']] * (max_len - len(ids))
+    return ids + padding
+
+
+def calculate_metrics(preds, labels):
+    preds_binary = (np.array(preds) > 0.5).astype(int)
+    labels = np.array(labels).astype(int)
+
+    return {
+        'accuracy': accuracy_score(labels, preds_binary),
+        'precision': precision_score(labels, preds_binary, zero_division=0),
+        'recall': recall_score(labels, preds_binary, zero_division=0),
+        'f1': f1_score(labels, preds_binary, zero_division=0)
+    }
