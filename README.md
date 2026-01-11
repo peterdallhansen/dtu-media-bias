@@ -2,6 +2,8 @@
 
 A deep learning project for detecting and explaining hyperpartisan (politically biased) news articles. The models are trained on the SemEval-2019 Task 4 Hyperpartisan News Detection dataset.
 
+This repository accompanies the paper *Explaining Political Bias Classification in News Articles using CNNs and Transformers* (Jensen, Agbesi, Dall-Hansen, 2025).
+
 ## Abstract
 
 Detecting political bias in news articles is an increasingly important task in the era of misinformation and polarized media. In this project, we implement multiple approaches for binary classification of news articles as hyperpartisan or mainstream: a CNN with GloVe embeddings, a transformer-based classifier using DistilBERT, and an SVM baseline. Beyond classification, we explore interpretability methods to identify which tokens contribute most to model decisions.
