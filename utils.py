@@ -2,17 +2,18 @@ import numpy as np
 from collections import Counter
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 import gensim.downloader as api
+from tqdm import tqdm
 
 
 def load_word2vec():
-    print("Loading Word2Vec embeddings (will download if not cached)...")
+    print("Loading word2vec...")
     model = api.load('word2vec-google-news-300')
     return model
 
 
 def build_vocab(articles, min_freq=2, max_size=50000):
     word_counts = Counter()
-    for article in articles:
+    for article in tqdm(articles, desc="Building vocab"):
         word_counts.update(article['tokens'])
 
     vocab = {'<PAD>': 0, '<UNK>': 1}
@@ -27,12 +28,12 @@ def create_embedding_matrix(vocab, word2vec_model, dim=300):
     matrix[0] = np.zeros(dim)
 
     found = 0
-    for word, idx in vocab.items():
+    for word, idx in tqdm(vocab.items(), desc="Creating embeddings"):
         if word in word2vec_model:
             matrix[idx] = word2vec_model[word]
             found += 1
 
-    print(f"Found {found}/{len(vocab)} words in Word2Vec")
+    print(f"  {found}/{len(vocab)} words found in word2vec")
     return matrix
 
 

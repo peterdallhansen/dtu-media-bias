@@ -1,8 +1,91 @@
 import re
 import pickle
+import zipfile
+import math
+import requests
+from pathlib import Path
 from lxml import etree
 from tqdm import tqdm
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import config
+
+if config.USE_NER_FEATURES:
+    import spacy
+
+ZENODO_URL = "https://zenodo.org/api/records/5776081/files-archive"
+
+
+def download_dataset():
+    if config.ARTICLES_TRAIN.exists():
+        return
+
+    print("Dataset not found. Downloading from Zenodo...")
+    config.DATA_DIR.mkdir(exist_ok=True)
+
+    zip_path = config.DATA_DIR / "dataset.zip"
+    response = requests.get(ZENODO_URL, stream=True)
+    total = int(response.headers.get('content-length', 0))
+
+    with open(zip_path, 'wb') as f:
+        with tqdm(total=total, unit='B', unit_scale=True, desc="Downloading") as pbar:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+                pbar.update(len(chunk))
+
+    print("Extracting...")
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        for member in tqdm(zf.namelist(), desc="Extracting"):
+            if member.endswith('.zip'):
+                inner_zip_path = config.DATA_DIR / member
+                zf.extract(member, config.DATA_DIR)
+                with zipfile.ZipFile(inner_zip_path, 'r') as inner_zf:
+                    inner_zf.extractall(config.DATA_DIR)
+                inner_zip_path.unlink()
+            elif not member.endswith('/'):
+                zf.extract(member, config.DATA_DIR)
+
+    zip_path.unlink()
+    print("Dataset ready.")
+
+
+def extract_date_features(published_str):
+    if not published_str:
+        return [0.5, 0.5]
+    try:
+        parts = published_str.split('-')
+        year = int(parts[0]) if len(parts) > 0 else 2010
+        month = int(parts[1]) if len(parts) > 1 else 6
+        year_norm = (year - 2000) / 20.0
+        year_norm = max(0.0, min(1.0, year_norm))
+        month_norm = (month - 1) / 11.0
+        return [month_norm, year_norm]
+    except:
+        return [0.5, 0.5]
+
+
+def extract_hyperlink_features(hyperlinks):
+    external = sum(1 for h in hyperlinks if h.get('type') == 'external')
+    internal = sum(1 for h in hyperlinks if h.get('type') == 'internal')
+    total = external + internal
+    external_log = math.log1p(external)
+    internal_log = math.log1p(internal)
+    link_ratio = external / (total + 1)
+    has_links = 1.0 if total > 0 else 0.0
+    return [external_log, internal_log, link_ratio, has_links]
+
+
+def extract_sentiment_features(text, analyzer):
+    scores = analyzer.polarity_scores(text[:5000])
+    return [scores['compound'], scores['pos'], scores['neg']]
+
+
+def extract_ner_features(text, nlp):
+    doc = nlp(text[:10000])
+    counts = {'PERSON': 0, 'ORG': 0, 'GPE': 0, 'NORP': 0, 'EVENT': 0}
+    for ent in doc.ents:
+        if ent.label_ in counts:
+            counts[ent.label_] += 1
+    return [math.log1p(counts[k]) for k in ['PERSON', 'ORG', 'GPE', 'NORP', 'EVENT']]
 
 
 def extract_text(element):
@@ -30,6 +113,8 @@ def tokenize(text):
 
 def parse_articles(xml_path):
     articles = {}
+    analyzer = SentimentIntensityAnalyzer()
+    nlp = spacy.load('en_core_web_sm', disable=['parser']) if config.USE_NER_FEATURES else None
     context = etree.iterparse(xml_path, events=('end',), tag='article')
 
     for event, elem in tqdm(context, desc=f"Parsing {xml_path.name}"):
@@ -48,13 +133,24 @@ def parse_articles(xml_path):
             if href:
                 hyperlinks.append({'href': href, 'type': link_type})
 
+        features = []
+        if config.USE_DATE_FEATURES:
+            features += extract_date_features(published)
+        if config.USE_HYPERLINK_FEATURES:
+            features += extract_hyperlink_features(hyperlinks)
+        if config.USE_SENTIMENT_FEATURES:
+            features += extract_sentiment_features(text, analyzer)
+        if config.USE_NER_FEATURES:
+            features += extract_ner_features(text, nlp)
+
         articles[article_id] = {
             'id': article_id,
             'title': title,
             'published': published,
             'text': cleaned,
             'tokens': tokens,
-            'hyperlinks': hyperlinks
+            'hyperlinks': hyperlinks,
+            'features': features
         }
 
         elem.clear()
@@ -68,7 +164,7 @@ def parse_labels(xml_path):
     labels = {}
     context = etree.iterparse(xml_path, events=('end',), tag='article')
 
-    for event, elem in context:
+    for event, elem in tqdm(context, desc=f"Labels [{xml_path.name}]"):
         article_id = elem.get('id')
         hyperpartisan = elem.get('hyperpartisan') == 'true'
         labels[article_id] = hyperpartisan
@@ -88,34 +184,52 @@ def merge_data(articles, labels):
 
 
 def preprocess_and_cache():
+    download_dataset()
     config.CACHE_DIR.mkdir(exist_ok=True)
 
-    print("Processing training data...")
+    print("Training set:")
     train_articles = parse_articles(config.ARTICLES_TRAIN)
     train_labels = parse_labels(config.LABELS_TRAIN)
     train_data = merge_data(train_articles, train_labels)
 
-    print(f"Train samples: {len(train_data)}")
-    print(f"Hyperpartisan: {sum(d['label'] for d in train_data)}")
-    print(f"Not hyperpartisan: {sum(1 - d['label'] for d in train_data)}")
+    pos = sum(d['label'] for d in train_data)
+    neg = len(train_data) - pos
+    print(f"  {len(train_data)} samples ({pos} hyperpartisan, {neg} not)")
 
     cache_path = config.CACHE_DIR / "train_data.pkl"
     with open(cache_path, 'wb') as f:
         pickle.dump(train_data, f)
-    print(f"Cached to {cache_path}")
+    print(f"  -> {cache_path}")
 
     if config.ARTICLES_TEST.exists() and config.LABELS_TEST.exists():
-        print("\nProcessing test data...")
+        print("\nTest set (by-article):")
         test_articles = parse_articles(config.ARTICLES_TEST)
         test_labels = parse_labels(config.LABELS_TEST)
         test_data = merge_data(test_articles, test_labels)
 
-        print(f"Test samples: {len(test_data)}")
+        pos = sum(d['label'] for d in test_data)
+        neg = len(test_data) - pos
+        print(f"  {len(test_data)} samples ({pos} hyperpartisan, {neg} not)")
 
-        cache_path = config.CACHE_DIR / "test_data.pkl"
+        cache_path = config.CACHE_DIR / "test_byarticle_data.pkl"
         with open(cache_path, 'wb') as f:
             pickle.dump(test_data, f)
-        print(f"Cached to {cache_path}")
+        print(f"  -> {cache_path}")
+
+    if config.ARTICLES_TEST_BYPUB.exists() and config.LABELS_TEST_BYPUB.exists():
+        print("\nTest set (by-publisher):")
+        test_articles = parse_articles(config.ARTICLES_TEST_BYPUB)
+        test_labels = parse_labels(config.LABELS_TEST_BYPUB)
+        test_data = merge_data(test_articles, test_labels)
+
+        pos = sum(d['label'] for d in test_data)
+        neg = len(test_data) - pos
+        print(f"  {len(test_data)} samples ({pos} hyperpartisan, {neg} not)")
+
+        cache_path = config.CACHE_DIR / "test_bypublisher_data.pkl"
+        with open(cache_path, 'wb') as f:
+            pickle.dump(test_data, f)
+        print(f"  -> {cache_path}")
 
     return train_data
 
@@ -123,7 +237,8 @@ def preprocess_and_cache():
 def load_cached_data(split='train'):
     cache_path = config.CACHE_DIR / f"{split}_data.pkl"
     if not cache_path.exists():
-        raise FileNotFoundError(f"Cache not found: {cache_path}. Run preprocess.py first.")
+        print(f"No cache found, preprocessing...")
+        preprocess_and_cache()
     with open(cache_path, 'rb') as f:
         return pickle.load(f)
 
