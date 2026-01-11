@@ -2,6 +2,7 @@ import re
 import pickle
 import zipfile
 import math
+import hashlib
 import requests
 from pathlib import Path
 from lxml import etree
@@ -11,6 +12,17 @@ from cnn import config
 
 if config.USE_NER_FEATURES:
     import spacy
+
+
+def get_config_hash():
+    """Generate a hash based on feature configuration to detect config changes."""
+    config_str = (
+        f"date={config.USE_DATE_FEATURES},"
+        f"hyperlink={config.USE_HYPERLINK_FEATURES},"
+        f"sentiment={config.USE_SENTIMENT_FEATURES},"
+        f"ner={config.USE_NER_FEATURES}"
+    )
+    return hashlib.md5(config_str.encode()).hexdigest()[:8]
 
 ZENODO_URL = "https://zenodo.org/api/records/5776081/files-archive"
 
@@ -187,6 +199,9 @@ def preprocess_and_cache():
     download_dataset()
     config.CACHE_DIR.mkdir(exist_ok=True)
 
+    cfg_hash = get_config_hash()
+    print(f"Config hash: {cfg_hash}")
+
     print("Training set:")
     train_articles = parse_articles(config.ARTICLES_TRAIN)
     train_labels = parse_labels(config.LABELS_TRAIN)
@@ -196,7 +211,7 @@ def preprocess_and_cache():
     neg = len(train_data) - pos
     print(f"  {len(train_data)} samples ({pos} hyperpartisan, {neg} not)")
 
-    cache_path = config.CACHE_DIR / "train_data.pkl"
+    cache_path = config.CACHE_DIR / f"train_data_{cfg_hash}.pkl"
     with open(cache_path, 'wb') as f:
         pickle.dump(train_data, f)
     print(f"  -> {cache_path}")
@@ -211,7 +226,7 @@ def preprocess_and_cache():
         neg = len(test_data) - pos
         print(f"  {len(test_data)} samples ({pos} hyperpartisan, {neg} not)")
 
-        cache_path = config.CACHE_DIR / "test_byarticle_data.pkl"
+        cache_path = config.CACHE_DIR / f"test_byarticle_data_{cfg_hash}.pkl"
         with open(cache_path, 'wb') as f:
             pickle.dump(test_data, f)
         print(f"  -> {cache_path}")
@@ -226,7 +241,7 @@ def preprocess_and_cache():
         neg = len(test_data) - pos
         print(f"  {len(test_data)} samples ({pos} hyperpartisan, {neg} not)")
 
-        cache_path = config.CACHE_DIR / "test_bypublisher_data.pkl"
+        cache_path = config.CACHE_DIR / f"test_bypublisher_data_{cfg_hash}.pkl"
         with open(cache_path, 'wb') as f:
             pickle.dump(test_data, f)
         print(f"  -> {cache_path}")
@@ -235,9 +250,10 @@ def preprocess_and_cache():
 
 
 def load_cached_data(split='train'):
-    cache_path = config.CACHE_DIR / f"{split}_data.pkl"
+    cfg_hash = get_config_hash()
+    cache_path = config.CACHE_DIR / f"{split}_data_{cfg_hash}.pkl"
     if not cache_path.exists():
-        print(f"No cache found, preprocessing...")
+        print(f"No cache found for config {cfg_hash}, preprocessing...")
         preprocess_and_cache()
     with open(cache_path, 'rb') as f:
         return pickle.load(f)
