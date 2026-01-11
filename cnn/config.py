@@ -1,8 +1,8 @@
 from pathlib import Path
 
-BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "Dataset"
+BASE_DIR = Path(__file__).parent.parent  # Project root
 CACHE_DIR = BASE_DIR / "cache"
+DATA_DIR = CACHE_DIR / "Dataset"
 
 ARTICLES_TRAIN = DATA_DIR / "articles-training-byarticle-20181122.xml"
 LABELS_TRAIN = DATA_DIR / "ground-truth-training-byarticle-20181122.xml"
@@ -19,7 +19,7 @@ MIN_WORD_FREQ = 2
 VOCAB_SIZE = 50000
 
 NUM_FILTERS = 128
-KERNEL_SIZES = [2, 3, 4, 5, 6]
+KERNEL_SIZES = [3, 4, 5]
 DROPOUT = 0.5
 
 USE_DATE_FEATURES = True
@@ -35,9 +35,10 @@ NUM_EXTRA_FEATURES = (
 )
 
 BATCH_SIZE = 32
+NUM_WORKERS = 0
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 0.01
-NUM_EPOCHS = 20
+NUM_EPOCHS = 40
 
 # Cross-validation settings
 NUM_FOLDS = 10
@@ -45,4 +46,4 @@ ENSEMBLE_TOP_K = 3
 EARLY_STOPPING_PATIENCE = 5
 
 RANDOM_SEED = 42
-DEVICE = "cuda"
+DEVICE = "mps"  # Should be set to 'cuda' if on nvidia graphics card

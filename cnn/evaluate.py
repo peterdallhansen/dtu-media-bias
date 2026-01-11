@@ -2,11 +2,11 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import config
+from . import config
 from preprocess import load_cached_data
-from dataset import HyperpartisanDataset
-from model import HyperpartisanCNN
-from utils import calculate_metrics
+from .dataset import HyperpartisanDataset
+from .model import HyperpartisanCNN
+from .utils import calculate_metrics
 
 
 def load_model(checkpoint_path, device):
@@ -117,8 +117,16 @@ def print_metrics(name, metrics, n_samples):
           f"R={metrics['recall']:.3f}  F1={metrics['f1']:.3f}")
 
 
+def get_device():
+    if config.DEVICE == "mps" and torch.backends.mps.is_available():
+        return torch.device("mps")
+    elif config.DEVICE == "cuda" and torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
 def main():
-    device = torch.device(config.DEVICE if torch.cuda.is_available() else "cpu")
+    device = get_device()
 
     # Try to load ensemble first
     ensemble_models, vocab = load_ensemble(device)

@@ -5,18 +5,18 @@ import gensim.downloader as api
 from tqdm import tqdm
 
 
-def load_word2vec():
-    print("Loading word2vec...")
-    model = api.load('word2vec-google-news-300')
+def load_glove():
+    print("Loading GloVe embeddings...")
+    model = api.load("glove-wiki-gigaword-300")
     return model
 
 
 def build_vocab(articles, min_freq=2, max_size=50000):
     word_counts = Counter()
     for article in tqdm(articles, desc="Building vocab"):
-        word_counts.update(article['tokens'])
+        word_counts.update(article["tokens"])
 
-    vocab = {'<PAD>': 0, '<UNK>': 1}
+    vocab = {"<PAD>": 0, "<UNK>": 1}
     for word, count in word_counts.most_common(max_size - 2):
         if count >= min_freq:
             vocab[word] = len(vocab)
@@ -38,8 +38,8 @@ def create_embedding_matrix(vocab, word2vec_model, dim=300):
 
 
 def tokens_to_ids(tokens, vocab, max_len):
-    ids = [vocab.get(t, vocab['<UNK>']) for t in tokens[:max_len]]
-    padding = [vocab['<PAD>']] * (max_len - len(ids))
+    ids = [vocab.get(t, vocab["<UNK>"]) for t in tokens[:max_len]]
+    padding = [vocab["<PAD>"]] * (max_len - len(ids))
     return ids + padding
 
 
@@ -48,8 +48,8 @@ def calculate_metrics(preds, labels):
     labels = np.array(labels).astype(int)
 
     return {
-        'accuracy': accuracy_score(labels, preds_binary),
-        'precision': precision_score(labels, preds_binary, zero_division=0),
-        'recall': recall_score(labels, preds_binary, zero_division=0),
-        'f1': f1_score(labels, preds_binary, zero_division=0)
+        "accuracy": accuracy_score(labels, preds_binary),
+        "precision": precision_score(labels, preds_binary, zero_division=0),
+        "recall": recall_score(labels, preds_binary, zero_division=0),
+        "f1": f1_score(labels, preds_binary, zero_division=0),
     }

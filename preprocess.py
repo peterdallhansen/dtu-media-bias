@@ -7,7 +7,7 @@ from pathlib import Path
 from lxml import etree
 from tqdm import tqdm
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import config
+from cnn import config
 
 if config.USE_NER_FEATURES:
     import spacy

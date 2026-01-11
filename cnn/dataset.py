@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Dataset
-from utils import tokens_to_ids
-import config
+from .utils import tokens_to_ids
+from . import config
 
 
 class HyperpartisanDataset(Dataset):
@@ -16,7 +16,15 @@ class HyperpartisanDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         token_ids = tokens_to_ids(item['tokens'], self.vocab, self.max_len)
-        features = item.get('features', [0.0] * config.NUM_EXTRA_FEATURES)
+        features = item.get('features', [])
+
+        # Ensure features match expected length (pad with 0 or truncate)
+        expected_len = config.NUM_EXTRA_FEATURES
+        if len(features) < expected_len:
+            features = features + [0.0] * (expected_len - len(features))
+        elif len(features) > expected_len:
+            features = features[:expected_len]
+
         return {
             'input_ids': torch.tensor(token_ids, dtype=torch.long),
             'extra_features': torch.tensor(features, dtype=torch.float),
