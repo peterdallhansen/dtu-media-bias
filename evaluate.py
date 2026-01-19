@@ -34,6 +34,15 @@ from bert_mlp.utils import calculate_metrics as bert_calculate_metrics
 from bert_mlp.utils import extract_features as bert_extract_features
 import bert_mlp.config as bert_mlp_config
 
+# ChatGPT imports
+try:
+    from chatgpt_bias.utils import batch_classify
+    import chatgpt_bias.config as chatgpt_config
+    CHATGPT_AVAILABLE = True
+except (ImportError, ValueError) as e:
+    CHATGPT_AVAILABLE = False
+    CHATGPT_ERROR = str(e)
+
 
 # Reference values from SemEval-2019 Task 4 paper (Table 1)
 PAPER_RESULTS = {
@@ -322,6 +331,51 @@ def evaluate_bert_mlp(models, info, data, device, cache_name):
     return bert_calculate_metrics(ensemble_preds, labels)
 
 
+def evaluate_chatgpt(data, split_name=None):
+    """
+    Evaluate ChatGPT model on dataset.
+    
+    First tries to load saved results to avoid re-running expensive API calls.
+    If no saved results exist, runs evaluation and saves results.
+    """
+    if not CHATGPT_AVAILABLE:
+        return None
+    
+    # Try to load saved results first
+    if split_name:
+        from chatgpt_bias.utils import get_saved_metrics
+        saved_metrics = get_saved_metrics(split_name)
+        if saved_metrics:
+            print(f"    (Using saved ChatGPT results)")
+            return saved_metrics
+    
+    # No saved results, run evaluation
+    print(f"    (Running ChatGPT evaluation - this may take a while...)")
+    result = batch_classify(
+        articles=data,
+        max_articles=chatgpt_config.MAX_ARTICLES_PER_SPLIT,
+        use_cache=True,
+        rate_limit_delay=0.5
+    )
+    
+    # Save results for next time
+    if split_name:
+        import json
+        from datetime import datetime
+        results_path = chatgpt_config.RESPONSE_CACHE_DIR / f"results_{split_name}.json"
+        save_data = {
+            "split": split_name,
+            "max_articles": chatgpt_config.MAX_ARTICLES_PER_SPLIT,
+            "num_articles_evaluated": result['num_articles'],
+            "metrics": result['metrics'],
+            "timestamp": datetime.now().isoformat(),
+        }
+        with open(results_path, 'w') as f:
+            json.dump(save_data, f, indent=2)
+    
+    return result['metrics']
+
+
 def print_table(title, results):
     """Print results table."""
     print(f"\n{title}")
@@ -533,6 +587,13 @@ def main():
         else:
             results.append(("BERT-MLP (Ours)", None))
 
+        if CHATGPT_AVAILABLE:
+            print("  Evaluating ChatGPT model...")
+            metrics = evaluate_chatgpt(data, split_name="test_byarticle")
+            results.append(("ChatGPT (Ours)", metrics))
+        else:
+            results.append(("ChatGPT (Ours)", None))
+
         results_by_article = results
         print_table("By-Article Test Set", results)
         print_paper_reference("by_article")
@@ -574,6 +635,13 @@ def main():
             results.append(("BERT-MLP (Ours)", metrics))
         else:
             results.append(("BERT-MLP (Ours)", None))
+
+        if CHATGPT_AVAILABLE:
+            print("  Evaluating ChatGPT model...")
+            metrics = evaluate_chatgpt(data, split_name="test_bypublisher")
+            results.append(("ChatGPT (Ours)", metrics))
+        else:
+            results.append(("ChatGPT (Ours)", None))
 
         results_by_publisher = results
         print_table("By-Publisher Test Set", results)

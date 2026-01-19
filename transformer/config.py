@@ -48,4 +48,23 @@ DROPOUT = 0.5
 # Cross-validation settings
 NUM_FOLDS = 10
 ENSEMBLE_TOP_K = 3
-EARLY_STOPPING_PATIENCE = 5
+EARLY_STOPPING_PATIENCE = 3
+
+# Length debiasing (set to reduce length bias in predictions)
+USE_LENGTH_DEBIASING = True
+# Random truncation range: [min, max] percent of tokens to keep during training
+TRUNCATION_RANGE = (0.3, 1.0)  # Randomly keep 30-100% of tokens
+# Gradient reversal for length prediction (adversarial debiasing)
+USE_GRADIENT_REVERSAL = True
+GRADIENT_REVERSAL_LAMBDA = 0.1  # Strength of adversarial loss
+
+# Fine-tuning configuration (end-to-end training with BERT)
+USE_FINE_TUNING = True  # If True, use end-to-end training instead of frozen embeddings
+FINE_TUNE_LAYERS = 1  # Number of transformer layers to unfreeze (from top)
+FINE_TUNE_LR = 2e-5  # Learning rate for BERT layers
+CLASSIFIER_LR = 1e-3  # Learning rate for classifier head (higher than BERT)
+DISCRIMINATIVE_LR_FACTOR = 0.9  # Multiply LR by this for each lower layer
+FREEZE_EPOCHS = 3  # Train classifier only for this many epochs before unfreezing
+FINE_TUNE_EPOCHS = 10  # Additional epochs with BERT unfrozen
+LABEL_SMOOTHING = 0.1  # Smooth labels to prevent overconfidence
+

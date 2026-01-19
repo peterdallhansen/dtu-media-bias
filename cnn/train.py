@@ -11,7 +11,7 @@ from .dataset import HyperpartisanDataset
 from .model import HyperpartisanCNN
 
 
-def train_epoch(model, loader, criterion, optimizer, device):
+def train_epoch(model, loader, criterion, optimizer, device, pos_class_weight):
     model.train()
     total_loss = 0
     all_preds, all_labels = [], []
@@ -23,11 +23,19 @@ def train_epoch(model, loader, criterion, optimizer, device):
 
         optimizer.zero_grad()
         outputs = model(input_ids, extra_features)
+        
+        # Compute per-sample weights for this batch
+        # Positive class (HP) gets higher weight to address imbalance
+        sample_weights = torch.ones_like(labels)
+        sample_weights[labels == 1] = pos_class_weight
+        
         loss = criterion(outputs, labels)
-        loss.backward()
+        # Apply weights to loss
+        weighted_loss = (loss * sample_weights).mean()
+        weighted_loss.backward()
         optimizer.step()
 
-        total_loss += loss.item()
+        total_loss += weighted_loss.item()
         all_preds.extend(outputs.detach().cpu().numpy())
         all_labels.extend(labels.cpu().numpy())
 
@@ -48,8 +56,10 @@ def evaluate(model, loader, criterion, device):
 
             outputs = model(input_ids, extra_features)
             loss = criterion(outputs, labels)
+            # Take mean since criterion has reduction='none'
+            batch_loss = loss.mean()
 
-            total_loss += loss.item()
+            total_loss += batch_loss.item()
             all_preds.extend(outputs.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
@@ -79,6 +89,7 @@ def train_fold(
     vocab,
     device,
     num_folds,
+    all_labels,
 ):
     """Train a single fold and return the best model state and validation metrics."""
 
@@ -102,7 +113,8 @@ def train_fold(
         len(vocab), embedding_matrix, num_extra_features=config.NUM_EXTRA_FEATURES
     ).to(device)
 
-    criterion = nn.BCELoss()
+    # Use standard BCE loss, apply weighting in training loop
+    criterion = nn.BCELoss(reduction='none')  # reduction='none' to get per-sample loss
     optimizer = torch.optim.Adam(
         model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY
     )
@@ -111,9 +123,18 @@ def train_fold(
     best_model_state = None
     patience_counter = 0
 
+    # Calculate pos_class_weight for this fold
+    fold_labels = all_labels[train_indices]
+    pos_weight = np.sum(fold_labels == 0) / np.sum(fold_labels == 1)
+
+    # Add learning rate scheduler for training stability
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config.NUM_EPOCHS, eta_min=1e-6
+    )
+
     for epoch in range(config.NUM_EPOCHS):
         train_loss, train_metrics = train_epoch(
-            model, train_loader, criterion, optimizer, device
+            model, train_loader, criterion, optimizer, device, pos_weight
         )
         val_loss, val_metrics, _ = evaluate(model, val_loader, criterion, device)
 
@@ -130,6 +151,9 @@ def train_fold(
             patience_counter = 0
         else:
             patience_counter += 1
+
+        # Step the learning rate scheduler
+        scheduler.step()
 
         if patience_counter >= config.EARLY_STOPPING_PATIENCE:
             print(f"  Early stop at epoch {epoch+1}")
@@ -190,6 +214,15 @@ def main():
 
     print(f"\n{num_folds}-Fold Cross Validation")
 
+    # Calculate class weights for handling imbalance
+    num_positive = np.sum(labels == 1)
+    num_negative = np.sum(labels == 0)
+    # Weight for each sample: higher weight for minority class
+    class_weights = torch.ones(len(labels))
+    class_weights[labels == 1] = num_negative / num_positive
+    print(f"\nClass distribution: Non-HP={num_negative}, HP={num_positive}")
+    print(f"Class weight for HP samples: {num_negative / num_positive:.3f}")
+
     for fold_idx, (train_indices, val_indices) in enumerate(
         skf.split(np.zeros(len(labels)), labels)
     ):
@@ -206,6 +239,7 @@ def main():
             vocab,
             device,
             num_folds,
+            labels,
         )
 
         fold_scores.append(best_f1)

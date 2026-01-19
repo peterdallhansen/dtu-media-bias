@@ -37,6 +37,75 @@ def compute_embeddings(data, cache_path, model_name="distilbert-base-uncased"):
     return embeddings
 
 
+def compute_truncated_embeddings(
+    data, cache_path, model_name="distilbert-base-uncased", truncation_range=(0.3, 1.0)
+):
+    """
+    Compute embeddings with random truncation to reduce length bias.
+    
+    Each article is randomly truncated to keep between truncation_range[0] and
+    truncation_range[1] percent of its tokens. This prevents the model from
+    exploiting length as a shortcut.
+    
+    Args:
+        data: List of article dictionaries with 'tokens' key.
+        cache_path: Path to save cached embeddings.
+        model_name: Transformer model name.
+        truncation_range: Tuple (min_pct, max_pct) of tokens to keep.
+    
+    Returns:
+        Tuple of (embeddings array, lengths array for gradient reversal).
+    """
+    if cache_path.exists():
+        print(f"Loading truncated embeddings: {cache_path}")
+        with open(cache_path, "rb") as f:
+            cached = pickle.load(f)
+            if isinstance(cached, dict):
+                return cached["embeddings"], cached["lengths"]
+            return cached, None
+
+    print(f"Computing {model_name} embeddings with random truncation...")
+    print(f"Truncation range: {truncation_range[0]*100:.0f}% - {truncation_range[1]*100:.0f}%")
+    doc_embeddings = TransformerDocumentEmbeddings(model_name)
+    
+    min_pct, max_pct = truncation_range
+
+    embeddings = []
+    lengths = []  # Store normalized lengths for gradient reversal
+    
+    for item in tqdm(data, desc="Embedding (truncated)"):
+        tokens = item["tokens"][:512]
+        original_len = len(tokens)
+        
+        # Random truncation
+        keep_pct = np.random.uniform(min_pct, max_pct)
+        keep_n = max(1, int(original_len * keep_pct))
+        truncated_tokens = tokens[:keep_n]
+        
+        text = " ".join(truncated_tokens)
+        if not text.strip():
+            text = "empty"
+
+        sentence = Sentence(text)
+        doc_embeddings.embed(sentence)
+        emb = sentence.embedding.cpu().numpy()
+        embeddings.append(emb)
+        
+        # Store normalized length (0-1 scale) for adversarial training
+        lengths.append(original_len / 512.0)
+        
+        sentence.clear_embeddings()
+
+    embeddings = np.array(embeddings)
+    lengths = np.array(lengths, dtype=np.float32)
+
+    print(f"Saving truncated embeddings: {cache_path}")
+    with open(cache_path, "wb") as f:
+        pickle.dump({"embeddings": embeddings, "lengths": lengths}, f)
+
+    return embeddings, lengths
+
+
 def extract_features(data, config):
     """Extract metadata features based on config settings.
 

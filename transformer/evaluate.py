@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 import transformer.config as config
 from preprocess import load_cached_data
 from cnn.utils import calculate_metrics
-from transformer.model import TransformerClassifier
+from transformer.model import TransformerClassifier, DebiasedTransformerClassifier
 from transformer.dataset import EmbeddingDataset
 from transformer.utils import compute_embeddings, extract_features
 
@@ -26,18 +26,35 @@ def load_ensemble(device):
     top_indices = info["top_indices"]
     input_dim = info["input_dim"]
     num_extra_features = info.get("num_extra_features", 0)
+    is_debiased = info.get("debiased", False)
 
     models = []
     for idx in top_indices:
         fold_path = config.CACHE_DIR / f"transformer_model_fold_{idx}.pt"
         if fold_path.exists():
             checkpoint = torch.load(fold_path, map_location=device, weights_only=False)
-            model = TransformerClassifier(
-                input_dim=input_dim,
-                hidden_dim=256,
-                dropout=config.DROPOUT,
-                num_extra_features=num_extra_features,
-            ).to(device)
+            
+            # Check if this checkpoint is from a debiased model
+            checkpoint_debiased = checkpoint.get("debiased", False)
+            
+            if checkpoint_debiased:
+                # Load as DebiasedTransformerClassifier
+                model = DebiasedTransformerClassifier(
+                    input_dim=input_dim,
+                    hidden_dim=256,
+                    dropout=config.DROPOUT,
+                    num_extra_features=num_extra_features,
+                    gradient_reversal_lambda=config.GRADIENT_REVERSAL_LAMBDA,
+                ).to(device)
+            else:
+                # Load as standard TransformerClassifier
+                model = TransformerClassifier(
+                    input_dim=input_dim,
+                    hidden_dim=256,
+                    dropout=config.DROPOUT,
+                    num_extra_features=num_extra_features,
+                ).to(device)
+            
             model.load_state_dict(checkpoint["model_state_dict"])
             model.eval()
             models.append(model)

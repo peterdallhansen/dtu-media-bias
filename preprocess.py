@@ -124,9 +124,9 @@ def tokenize(text):
 
 
 def parse_articles(xml_path):
+    # Phase 1: Fast XML parsing - collect basic data without expensive processing
     articles = {}
-    analyzer = SentimentIntensityAnalyzer()
-    nlp = spacy.load('en_core_web_sm', disable=['parser']) if config.USE_NER_FEATURES else None
+    article_data = []
     context = etree.iterparse(xml_path, events=('end',), tag='article')
 
     for event, elem in tqdm(context, desc=f"Parsing {xml_path.name}"):
@@ -145,29 +145,69 @@ def parse_articles(xml_path):
             if href:
                 hyperlinks.append({'href': href, 'type': link_type})
 
-        features = []
-        if config.USE_DATE_FEATURES:
-            features += extract_date_features(published)
-        if config.USE_HYPERLINK_FEATURES:
-            features += extract_hyperlink_features(hyperlinks)
-        if config.USE_SENTIMENT_FEATURES:
-            features += extract_sentiment_features(text, analyzer)
-        if config.USE_NER_FEATURES:
-            features += extract_ner_features(text, nlp)
-
-        articles[article_id] = {
+        # Store basic article data
+        article_data.append({
             'id': article_id,
             'title': title,
             'published': published,
             'text': cleaned,
+            'raw_text': text,
             'tokens': tokens,
-            'hyperlinks': hyperlinks,
-            'features': features
-        }
+            'hyperlinks': hyperlinks
+        })
 
         elem.clear()
         while elem.getprevious() is not None:
             del elem.getparent()[0]
+
+    # Phase 2: Batch feature extraction (much faster)
+    print(f"Extracting features for {len(article_data)} articles...")
+    
+    # Prepare features that need batch processing
+    sentiment_features = []
+    ner_features = []
+    
+    if config.USE_SENTIMENT_FEATURES:
+        analyzer = SentimentIntensityAnalyzer()
+        texts = [item['raw_text'][:5000] for item in article_data]
+        sentiment_features = [
+            [scores['compound'], scores['pos'], scores['neg']]
+            for scores in [analyzer.polarity_scores(text) for text in tqdm(texts, desc="Sentiment", leave=False)]
+        ]
+    
+    if config.USE_NER_FEATURES:
+        nlp = spacy.load('en_core_web_sm', disable=['parser'])
+        texts = [item['raw_text'][:10000] for item in article_data]
+        
+        ner_features = []
+        for doc in tqdm(nlp.pipe(texts, batch_size=32, n_process=-1), total=len(texts), desc="NER", leave=False):
+            counts = {'PERSON': 0, 'ORG': 0, 'GPE': 0, 'NORP': 0, 'EVENT': 0}
+            for ent in doc.ents:
+                if ent.label_ in counts:
+                    counts[ent.label_] += 1
+            ner_features.append([math.log1p(counts[k]) for k in ['PERSON', 'ORG', 'GPE', 'NORP', 'EVENT']])
+    
+    # Phase 3: Assemble final articles dictionary
+    for idx, item in enumerate(article_data):
+        features = []
+        if config.USE_DATE_FEATURES:
+            features += extract_date_features(item['published'])
+        if config.USE_HYPERLINK_FEATURES:
+            features += extract_hyperlink_features(item['hyperlinks'])
+        if config.USE_SENTIMENT_FEATURES:
+            features += sentiment_features[idx]
+        if config.USE_NER_FEATURES:
+            features += ner_features[idx]
+
+        articles[item['id']] = {
+            'id': item['id'],
+            'title': item['title'],
+            'published': item['published'],
+            'text': item['text'],
+            'tokens': item['tokens'],
+            'hyperlinks': item['hyperlinks'],
+            'features': features
+        }
 
     return articles
 
@@ -201,6 +241,27 @@ def preprocess_and_cache():
 
     cfg_hash = get_config_hash()
     print(f"Config hash: {cfg_hash}")
+    
+    # Check if all required cached files already exist
+    train_cache = config.CACHE_DIR / f"train_data_{cfg_hash}.pkl"
+    test_byarticle_cache = config.CACHE_DIR / f"test_byarticle_data_{cfg_hash}.pkl"
+    test_bypublisher_cache = config.CACHE_DIR / f"test_bypublisher_data_{cfg_hash}.pkl"
+    
+    all_caches_exist = train_cache.exists()
+    if config.ARTICLES_TEST.exists() and config.LABELS_TEST.exists():
+        all_caches_exist = all_caches_exist and test_byarticle_cache.exists()
+    if config.ARTICLES_TEST_BYPUB.exists() and config.LABELS_TEST_BYPUB.exists():
+        all_caches_exist = all_caches_exist and test_bypublisher_cache.exists()
+    
+    if all_caches_exist:
+        print("All cached files found for this config. Skipping preprocessing.")
+        print(f"  ✓ {train_cache}")
+        if test_byarticle_cache.exists():
+            print(f"  ✓ {test_byarticle_cache}")
+        if test_bypublisher_cache.exists():
+            print(f"  ✓ {test_bypublisher_cache}")
+        with open(train_cache, 'rb') as f:
+            return pickle.load(f)
 
     print("Training set:")
     train_articles = parse_articles(config.ARTICLES_TRAIN)
